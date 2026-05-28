@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1c1c1d" />
+    <meta name="color-scheme" content="dark" />
+
+    <title>Collage Maker — vexel photo mosaics in any shape</title>
+    <meta
+      name="description"
+      content="Pack your photos into a heart, a letter, or any vector shape. Auto-fits cell count to photo count, detects faces locally, and exports PNG/JPG/SVG at any resolution."
+    />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Collage Maker" />
+    <meta
+      property="og:description"
+      content="Vexel-style photo mosaics in any shape. Faces auto-centered. Local processing — your photos never leave the browser."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Fonts are loaded locally via @fontsource packages in src/main.tsx -->
+  </head>
+  <body data-theme="studio">
+    <noscript>
+      <p style="font-family: sans-serif; padding: 24px; color: #d8d8d9; background: #1c1c1d;">
+        Collage Maker needs JavaScript to run. Please enable it and reload.
+      </p>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

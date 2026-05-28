@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Collage Maker",
+  "version": "0.1.0",
+  "identifier": "com.collagemaker.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Collage Maker",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1080,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "backgroundColor": "#1c1c1d"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Graphics and Design",
+    "shortDescription": "Vexel-style photo mosaics in any shape",
+    "longDescription": "Pack photos into a heart or any vector shape. Faces auto-detected and framed. Everything runs locally.",
+    "windows": {
+      "nsis": {
+        "compression": "zlib"
+      }
+    }
+  }
+}
