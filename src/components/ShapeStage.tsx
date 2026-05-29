@@ -1,8 +1,17 @@
 import { forwardRef } from 'react';
-import { Stage, Layer, Group, Rect, Image as KonvaImage, Line } from 'react-konva';
+import {
+  Stage,
+  Layer,
+  Group,
+  Rect,
+  Image as KonvaImage,
+  Line,
+  Path,
+} from 'react-konva';
 import type Konva from 'konva';
 import useImage from 'use-image';
 import type { Cell, Photo, Point } from '../types';
+import { computePhotoPlacement } from '../photoFraming';
 
 type Props = {
   width: number;          // logical width (cells are positioned in this space)
@@ -20,13 +29,12 @@ type Props = {
   showDetections: boolean;
   closeUp: boolean;
   closeUpTightness: number;
-  contourLoops: Point[][];
+  contourPath: string;
   contourShow: boolean;
   contourThickness: number;
   contourColor: string;
+  onEditPhoto?: (photoId: string) => void;
 };
-
-const MAX_UPSCALE = 2; // cap rendered density to 2x natural pixels to avoid pixelation
 
 const PLACEHOLDER_PALETTE = [
   '#fca5a5',
@@ -47,6 +55,7 @@ function PhotoCell({
   showDetections,
   closeUp,
   closeUpTightness,
+  onEditPhoto,
 }: {
   cell: Cell;
   photo: Photo | null;
@@ -55,6 +64,7 @@ function PhotoCell({
   showDetections: boolean;
   closeUp: boolean;
   closeUpTightness: number;
+  onEditPhoto?: (photoId: string) => void;
 }) {
   const [img] = useImage(photo?.src ?? '');
   const x = cell.x + gap / 2;
@@ -74,43 +84,10 @@ function PhotoCell({
     );
   }
 
-  // Cover-fit baseline
-  const coverScale = Math.max(w / photo.naturalWidth, h / photo.naturalHeight);
-
-  // Auto close-up: zoom further so the detected subject fills `tightness` of the cell.
-  // Capped at MAX_UPSCALE to avoid pixelation on low-res photos.
-  let scale = coverScale;
-  if (closeUp && photo.subject) {
-    const subjPixW = Math.max(1, photo.subject.w * photo.naturalWidth);
-    const subjPixH = Math.max(1, photo.subject.h * photo.naturalHeight);
-    const closeupScale = Math.min(
-      (w * closeUpTightness) / subjPixW,
-      (h * closeUpTightness) / subjPixH
-    );
-    scale = Math.max(coverScale, Math.min(closeupScale, MAX_UPSCALE));
-  }
-  const imgW = photo.naturalWidth * scale;
-  const imgH = photo.naturalHeight * scale;
-
-  // Pan so the subject's center is at the cell's center (clamped to keep cell covered).
-  const subject = photo.subject;
-  const sx = subject ? subject.x + subject.w / 2 : 0.5;
-  const sy = subject ? subject.y + subject.h / 2 : 0.5;
-  let offsetX = w / 2 - sx * imgW;
-  let offsetY = h / 2 - sy * imgH;
-  offsetX = Math.max(w - imgW, Math.min(0, offsetX));
-  offsetY = Math.max(h - imgH, Math.min(0, offsetY));
-
-  // Compute subject box in cell-local coords for the debug overlay.
-  const subjBox = subject
-    ? {
-        x: offsetX + subject.x * imgW,
-        y: offsetY + subject.y * imgH,
-        w: subject.w * imgW,
-        h: subject.h * imgH,
-        source: subject.source,
-      }
-    : null;
+  const placement = computePhotoPlacement(photo, w, h, {
+    closeUp,
+    closeUpTightness,
+  });
 
   return (
     <Group
@@ -119,15 +96,29 @@ function PhotoCell({
       clipFunc={(ctx) => {
         ctx.rect(0, 0, w, h);
       }}
+      onClick={() => onEditPhoto?.(photo.id)}
+      onTap={() => onEditPhoto?.(photo.id)}
+      onMouseEnter={(e) => {
+        if (onEditPhoto) e.target.getStage()?.container().style.setProperty('cursor', 'pointer');
+      }}
+      onMouseLeave={(e) => {
+        e.target.getStage()?.container().style.removeProperty('cursor');
+      }}
     >
-      <KonvaImage image={img} x={offsetX} y={offsetY} width={imgW} height={imgH} />
-      {showDetections && subjBox && (
+      <KonvaImage
+        image={img}
+        x={placement.x}
+        y={placement.y}
+        width={placement.w}
+        height={placement.h}
+      />
+      {showDetections && placement.subjectBox && (
         <Rect
-          x={subjBox.x}
-          y={subjBox.y}
-          width={subjBox.w}
-          height={subjBox.h}
-          stroke={subjBox.source === 'face' ? '#22c55e' : '#f59e0b'}
+          x={placement.subjectBox.x}
+          y={placement.subjectBox.y}
+          width={placement.subjectBox.w}
+          height={placement.subjectBox.h}
+          stroke={placement.subjectBox.source === 'face' ? '#22c55e' : '#f59e0b'}
           strokeWidth={1.5}
           listening={false}
         />
@@ -153,10 +144,11 @@ export const ShapeStage = forwardRef<Konva.Stage, Props>(function ShapeStage(
     showDetections,
     closeUp,
     closeUpTightness,
-    contourLoops,
+    contourPath,
     contourShow,
     contourThickness,
     contourColor,
+    onEditPhoto,
   },
   ref
 ) {
@@ -187,6 +179,7 @@ export const ShapeStage = forwardRef<Konva.Stage, Props>(function ShapeStage(
               showDetections={showDetections}
               closeUp={closeUp}
               closeUpTightness={closeUpTightness}
+              onEditPhoto={onEditPhoto}
             />
           );
         })}
@@ -201,19 +194,16 @@ export const ShapeStage = forwardRef<Konva.Stage, Props>(function ShapeStage(
           />
         </Layer>
       )}
-      {contourShow && contourLoops.length > 0 && (
+      {contourShow && contourPath && (
         <Layer listening={false}>
-          {contourLoops.map((loop, i) => (
-            <Line
-              key={i}
-              points={loop.flatMap((p) => [p.x, p.y])}
-              stroke={contourColor}
-              strokeWidth={contourThickness}
-              closed
-              lineJoin="miter"
-              lineCap="butt"
-            />
-          ))}
+          <Path
+            data={contourPath}
+            stroke={contourColor}
+            strokeWidth={contourThickness}
+            fillEnabled={false}
+            lineJoin="miter"
+            lineCap="butt"
+          />
         </Layer>
       )}
     </Stage>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { pickLegibleText } from '../export';
 
 export type ExportFormat = 'png' | 'jpg' | 'pdf' | 'svg';
 export type ExportSettings = {
@@ -31,7 +32,6 @@ const FORMATS: Array<{ id: ExportFormat; label: string; desc: string }> = [
 ];
 
 const MAX_EXPORT_DIM = 7200;
-const MAX_EXPORT_PIXELS = MAX_EXPORT_DIM * MAX_EXPORT_DIM;
 
 type Props = {
   open: boolean;
@@ -66,11 +66,18 @@ export function ExportModal({
   const transparentAvailable =
     allowTransparency && (format === 'png' || format === 'svg' || format === 'pdf');
   const finalTransparent = transparent && transparentAvailable;
-  const canExport =
-    w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM && w * h <= MAX_EXPORT_PIXELS;
+  // With both sides clamped to MAX_EXPORT_DIM, the product is bounded too,
+  // so a separate pixel-area check would be redundant.
+  const canExport = w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM;
 
+  // When the parent's aspect ratio changes (e.g. the user switched grid
+  // layout), recompute the custom height while preserving the user's current
+  // width. We track `customW` via a ref so the effect only fires on aspect
+  // changes — typing a new width is handled by the onChange handler below.
+  const customWRef = useRef(customW);
+  customWRef.current = customW;
   useEffect(() => {
-    setCustomH(Math.max(1, Math.round(customW / safeAspect)));
+    setCustomH(Math.max(1, Math.round(customWRef.current / safeAspect)));
   }, [safeAspect]);
 
   const estMb = useMemo(() => {
@@ -209,11 +216,7 @@ export function ExportModal({
               >
                 <span
                   style={{
-                    color: finalTransparent
-                      ? '#aaa'
-                      : (bgColor === '#1a1a1a' || bgColor === '#0f2027' || bgColor === '#22e07a')
-                      ? '#fff'
-                      : '#333',
+                    color: finalTransparent ? '#aaa' : pickLegibleText(bgColor),
                   }}
                 >
                   {previewLabel}

@@ -1,3 +1,5 @@
+import { LogoMark } from './LogoMark';
+
 type Props = {
   mode: 'shape' | 'grid';
   onMode: (m: 'shape' | 'grid') => void;
@@ -9,7 +11,7 @@ export function Header({ mode, onMode, photoCount, onExport }: Props) {
   return (
     <header className="cm-header">
       <div className="cm-brand">
-        <span className="cm-logo" />
+        <LogoMark />
         <span className="cm-brand-name">Collage Maker</span>
       </div>
       <nav className="cm-tabs" role="tablist">

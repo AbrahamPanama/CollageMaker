@@ -1,4 +1,7 @@
 import type { Photo } from '../types';
+import { computePhotoPlacement } from '../photoFraming';
+import { ProfileLibrary } from './ProfileLibrary';
+import type { Profile } from '../settingsStore';
 
 export type Settings = {
   targetCellSize: number;
@@ -27,7 +30,15 @@ type Props = {
   onShuffle: () => void;
   onClearPhotos: () => void;
   onRedetect: () => void;
+  onEditPhoto: (photoId: string) => void;
+  onDeletePhoto: (photoId: string) => void;
   analyzing: { done: number; total: number } | null;
+  profiles: Profile[];
+  activeProfileId: string | null;
+  onSaveProfile: (name: string) => void;
+  onApplyProfile: (id: string) => void;
+  onDeleteProfile: (id: string) => void;
+  onUpdateProfile: (id: string) => void;
 };
 
 const BG_SWATCHES = ['#ffffff', '#f5f1ea', '#1a1a1a', '#0f2027', '#22e07a'];
@@ -42,7 +53,15 @@ export function ControlsPanel({
   onShuffle,
   onClearPhotos,
   onRedetect,
+  onEditPhoto,
+  onDeletePhoto,
   analyzing,
+  profiles,
+  activeProfileId,
+  onSaveProfile,
+  onApplyProfile,
+  onDeleteProfile,
+  onUpdateProfile,
 }: Props) {
   const setS = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     setSettings({ ...settings, [k]: v });
@@ -51,6 +70,15 @@ export function ControlsPanel({
 
   return (
     <aside className="cm-panel cm-panel-right">
+      <ProfileLibrary
+        profiles={profiles}
+        activeProfileId={activeProfileId}
+        onSave={onSaveProfile}
+        onApply={onApplyProfile}
+        onDelete={onDeleteProfile}
+        onUpdate={onUpdateProfile}
+      />
+
       <section className="cm-section">
         <h3 className="cm-section-h">Photos</h3>
         <div className="cm-photo-pool">
@@ -60,24 +88,85 @@ export function ControlsPanel({
             </svg>
             <span>Add</span>
           </button>
-          {photos.map((p) => (
-            <span
-              key={p.id}
-              className={`cm-photo-tile ${
-                p.subject?.source === 'face'
-                  ? 'tile-face'
-                  : p.subject?.source === 'smartcrop'
-                  ? 'tile-smartcrop'
-                  : ''
-              }`}
-              style={{ backgroundImage: `url("${p.src}")` }}
-              title={
-                p.subject
-                  ? `framed via ${p.subject.source}`
-                  : 'no subject detected'
-              }
-            />
-          ))}
+          {photos.map((p, i) => {
+            const manualPreview = p.manualFrame
+              ? computePhotoPlacement(p, 100, 100, {
+                  closeUp: false,
+                  closeUpTightness: settings.closeUpTightness,
+                })
+              : null;
+
+            return (
+              <div
+                key={p.id}
+                className={`cm-photo-tile ${
+                  p.manualFrame
+                    ? 'tile-manual'
+                    : p.subject?.source === 'face'
+                    ? 'tile-face'
+                    : p.subject?.source === 'smartcrop'
+                    ? 'tile-smartcrop'
+                    : ''
+                }`}
+                title={
+                  p.manualFrame
+                    ? 'manual frame'
+                    : p.subject
+                    ? `framed via ${p.subject.source}`
+                    : 'no subject detected'
+                }
+              >
+                <img
+                  className={manualPreview ? 'is-manual-preview' : undefined}
+                  src={p.src}
+                  alt=""
+                  draggable={false}
+                  style={
+                    manualPreview
+                      ? {
+                          left: `${manualPreview.x}%`,
+                          top: `${manualPreview.y}%`,
+                          width: `${manualPreview.w}%`,
+                          height: `${manualPreview.h}%`,
+                        }
+                      : undefined
+                  }
+                />
+                <button
+                  className="cm-photo-open"
+                  aria-label={`Crop photo ${i + 1}`}
+                  onClick={() => onEditPhoto(p.id)}
+                />
+                <button
+                  className="cm-photo-delete"
+                  aria-label={`Delete photo ${i + 1}`}
+                  title={`Delete photo ${i + 1}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeletePhoto(p.id);
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
+                {p.manualFrame && (
+                  <span className="cm-photo-manual-mark" aria-hidden="true">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 2v4H2" />
+                      <path d="M18 2v4h4" />
+                      <path d="M6 22v-4H2" />
+                      <path d="M18 22v-4h4" />
+                    </svg>
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
         {analyzing && (
           <div className="cm-analyzing">

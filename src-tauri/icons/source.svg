@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="heart">
+      <path d="M512 869C512 869 128 623 128 365C128 222 229 121 357 121C435 121 487 168 512 225C537 168 589 121 667 121C795 121 896 222 896 365C896 623 512 869 512 869Z"/>
+    </clipPath>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="188" fill="#0a0a0b"/>
+  <rect x="92" y="92" width="840" height="840" rx="164" fill="#1c1c1d" stroke="#45464a" stroke-width="24"/>
+  <g clip-path="url(#heart)" stroke="#0a0a0b" stroke-width="22">
+    <rect x="80" y="80" width="220" height="235" fill="#22e07a"/>
+    <rect x="300" y="80" width="230" height="235" fill="#f8fafc"/>
+    <rect x="530" y="80" width="215" height="235" fill="#38bdf8"/>
+    <rect x="745" y="80" width="200" height="235" fill="#e11d48"/>
+    <rect x="80" y="315" width="180" height="190" fill="#f59e0b"/>
+    <rect x="260" y="315" width="270" height="190" fill="#a78bfa"/>
+    <rect x="530" y="315" width="220" height="190" fill="#22e07a"/>
+    <rect x="750" y="315" width="195" height="190" fill="#f8fafc"/>
+    <rect x="80" y="505" width="230" height="180" fill="#38bdf8"/>
+    <rect x="310" y="505" width="220" height="180" fill="#e11d48"/>
+    <rect x="530" y="505" width="270" height="180" fill="#f59e0b"/>
+    <rect x="800" y="505" width="145" height="180" fill="#a78bfa"/>
+    <rect x="190" y="685" width="190" height="155" fill="#f8fafc"/>
+    <rect x="380" y="685" width="260" height="155" fill="#22e07a"/>
+    <rect x="640" y="685" width="195" height="155" fill="#38bdf8"/>
+    <rect x="360" y="840" width="305" height="120" fill="#e11d48"/>
+  </g>
+  <path d="M512 869C512 869 128 623 128 365C128 222 229 121 357 121C435 121 487 168 512 225C537 168 589 121 667 121C795 121 896 222 896 365C896 623 512 869 512 869Z" fill="none" stroke="#22e07a" stroke-width="54" stroke-linejoin="round"/>
+  <path d="M512 869C512 869 128 623 128 365C128 222 229 121 357 121C435 121 487 168 512 225C537 168 589 121 667 121C795 121 896 222 896 365C896 623 512 869 512 869Z" fill="none" stroke="#ffffff" stroke-opacity=".34" stroke-width="18" stroke-linejoin="round"/>
+</svg>

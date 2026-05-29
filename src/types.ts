@@ -37,10 +37,17 @@ export type SubjectBox = {
   source: 'face' | 'smartcrop';
 };
 
+export type ManualFrame = {
+  cx: number;
+  cy: number;
+  zoom: number;
+};
+
 export type Photo = {
   id: string;
   src: string;
   naturalWidth: number;
   naturalHeight: number;
   subject: SubjectBox | null;
+  manualFrame?: ManualFrame;
 };

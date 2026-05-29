@@ -5,6 +5,7 @@ import { LAYOUTS, ASPECT_RATIOS } from '../layouts';
 import type { PhotoState } from '../types';
 import { CollageStage } from '../components/CollageStage';
 import { ExportModal, type ExportSettings } from '../components/ExportModal';
+import { downloadExport } from '../export';
 import { computeSlotRect, coverScale } from '../utils';
 
 const MAX_STAGE_DIM = 600;
@@ -125,36 +126,14 @@ export function GridCollage({ onExportRequest, exportOpen, onPhotoCountChange }:
       return;
     }
 
-    const stamp = Date.now();
-    if (es.format === 'png' || es.format === 'jpg') {
-      downloadDataUrl(dataUrl, `grid-collage-${stamp}.${es.format}`);
-    } else if (es.format === 'svg') {
-      const svg = `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${es.width} ${es.height}"><image href="${dataUrl}" width="${es.width}" height="${es.height}"/></svg>`;
-      downloadDataUrl(
-        'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-        `grid-collage-${stamp}.svg`
-      );
-    } else if (es.format === 'pdf') {
-      const { default: jsPDF } = await import('jspdf');
-      const orientation = es.width >= es.height ? 'landscape' : 'portrait';
-      const pdf = new jsPDF({
-        unit: 'px',
-        format: [es.width, es.height],
-        orientation,
-        hotfixes: ['px_scaling'],
-      });
-      pdf.addImage(
-        dataUrl,
-        mime === 'image/jpeg' ? 'JPEG' : 'PNG',
-        0,
-        0,
-        es.width,
-        es.height,
-        undefined,
-        'FAST'
-      );
-      pdf.save(`grid-collage-${stamp}.pdf`);
-    }
+    await downloadExport({
+      format: es.format,
+      dataUrl,
+      mime,
+      width: es.width,
+      height: es.height,
+      baseName: `grid-collage-${Date.now()}`,
+    });
     onExportRequest(false);
   };
 
@@ -258,13 +237,4 @@ export function GridCollage({ onExportRequest, exportOpen, onPhotoCountChange }:
       />
     </main>
   );
-}
-
-function downloadDataUrl(url: string, filename: string) {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
 }

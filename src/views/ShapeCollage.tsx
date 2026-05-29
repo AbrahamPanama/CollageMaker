@@ -1,27 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type Konva from 'konva';
 
 import { BASIC_SHAPES, shapeToSvgText } from '../shapes/library';
-import { userShapeToSvgText, loadUserShapes } from '../userShapes';
 import { parseShapePolyline, polygonArea, transformPolyline } from '../shape';
 import {
   assignPhotosToCells,
   findAutoParamsForCount,
   generateCells,
 } from '../shapeCollage';
-import type { Photo } from '../types';
+import type { ManualFrame, Photo } from '../types';
 import { detectSubject } from '../smartFrame';
 
-import { computeCellContour } from '../cellContour';
+import { computeCellContour, contourLoopsToSvgPath } from '../contour';
 import { ShapeStage } from '../components/ShapeStage';
 import { ShapeBrowser, type SelectedShape } from '../components/ShapeBrowser';
 import { ControlsPanel, type Settings } from '../components/ControlsPanel';
 import { StageBar } from '../components/StageBar';
 import { ExportModal, type ExportSettings } from '../components/ExportModal';
+import { FrameEditorModal } from '../components/FrameEditorModal';
+import { downloadExport, hexToRgb } from '../export';
+import {
+  createProfile,
+  loadLastSession,
+  loadProfiles,
+  mergeSettings,
+  saveLastSession,
+  saveProfiles,
+  type Profile,
+} from '../settingsStore';
 
 const STAGE_DIM = 600;
 const PADDING = 16;
+
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 3;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
 type Props = {
   onExportRequest: (open: boolean) => void;
@@ -29,36 +43,49 @@ type Props = {
   onPhotoCountChange: (n: number) => void;
 };
 
+const DEFAULT_SETTINGS: Settings = {
+  targetCellSize: 64,
+  minCellSize: 16,
+  gap: 2,
+  bgColor: '#ffffff',
+  showOutline: false,
+  showDetections: false,
+  closeUp: true,
+  closeUpTightness: 0.75,
+  autoFit: true,
+  contourShow: false,
+  contourOffset: 0,
+  contourThickness: 2,
+  contourColor: '#e11d48',
+  bgTransparent: false,
+};
+
+const DEFAULT_SHAPE: SelectedShape = { ...BASIC_SHAPES[0], source: 'basic' };
+
 export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }: Props) {
+  // Restore the last working session (settings + shape) if one exists.
+  const restored = useMemo(() => loadLastSession(), []);
+
   // ---------- Source state ----------
-  const [selectedShape, setSelectedShape] = useState<SelectedShape>(() => ({
-    ...BASIC_SHAPES[0],
-    source: 'basic',
-  }));
+  const [selectedShape, setSelectedShape] = useState<SelectedShape>(
+    () => restored?.shape ?? DEFAULT_SHAPE
+  );
 
   // ---------- Settings ----------
-  const [settings, setSettings] = useState<Settings>({
-    targetCellSize: 64,
-    minCellSize: 16,
-    gap: 2,
-    bgColor: '#ffffff',
-    showOutline: false,
-    showDetections: false,
-    closeUp: true,
-    closeUpTightness: 0.75,
-    autoFit: true,
-    contourShow: false,
-    contourOffset: 0,
-    contourThickness: 2,
-    contourColor: '#e11d48',
-    bgTransparent: false,
-  });
+  const [settings, setSettings] = useState<Settings>(() =>
+    restored ? mergeSettings(DEFAULT_SETTINGS, restored.settings) : DEFAULT_SETTINGS
+  );
+
+  // ---------- Profiles ----------
+  const [profiles, setProfiles] = useState<Profile[]>(() => loadProfiles());
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
 
   // ---------- Photos / detection ----------
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [analyzing, setAnalyzing] = useState<{ done: number; total: number } | null>(null);
   const [shuffleSeed, setShuffleSeed] = useState(1);
   const [isDraggingPhotos, setIsDraggingPhotos] = useState(false);
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
 
   const stageRef = useRef<Konva.Stage>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -72,13 +99,15 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
   const [isPanning, setIsPanning] = useState(false);
 
   // ---------- Active mask SVG ----------
-  const activeShapeSvg = useMemo(() => {
-    const basic = BASIC_SHAPES.find((s) => s.id === selectedShape.id);
-    if (basic) return shapeToSvgText(basic);
-    const user = loadUserShapes().find((s) => s.id === selectedShape.id);
-    if (user) return userShapeToSvgText(user);
-    return shapeToSvgText(BASIC_SHAPES[0]);
-  }, [selectedShape]);
+  // Build directly from the selected shape's own path data. `selectedShape`
+  // always carries `d` + `viewBox` (for both basic and user shapes), so we
+  // never need to re-resolve it against the library. This keeps profiles and
+  // restored sessions rendering correctly even if the source user-shape was
+  // later deleted from the library.
+  const activeShapeSvg = useMemo(
+    () => shapeToSvgText(selectedShape),
+    [selectedShape]
+  );
 
   const parsed = useMemo(
     () => parseShapePolyline(activeShapeSvg, 600),
@@ -233,6 +262,33 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
   const handleClearPhotos = () => setPhotos([]);
   const handleShuffle = () => setShuffleSeed((s) => s + 1);
   const handleAddPhotos = () => fileInputRef.current?.click();
+  const handleDeletePhoto = (photoId: string) => {
+    setPhotos((prev) => prev.filter((photo) => photo.id !== photoId));
+    setEditingPhotoId((current) => (current === photoId ? null : current));
+  };
+  const editingPhoto = useMemo(
+    () => photos.find((photo) => photo.id === editingPhotoId) ?? null,
+    [editingPhotoId, photos]
+  );
+
+  const handleSaveManualFrame = (photoId: string, frame: ManualFrame) => {
+    setPhotos((prev) =>
+      prev.map((photo) =>
+        photo.id === photoId ? { ...photo, manualFrame: frame } : photo
+      )
+    );
+  };
+
+  const handleResetManualFrame = (photoId: string) => {
+    setPhotos((prev) =>
+      prev.map((photo) => {
+        if (photo.id !== photoId) return photo;
+        const { manualFrame, ...rest } = photo;
+        void manualFrame;
+        return rest;
+      })
+    );
+  };
 
   const handleRedetect = async () => {
     if (photos.length === 0) return;
@@ -315,69 +371,48 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
       if (prevZoom !== 1) setZoom(prevZoom);
     }
 
-    const stamp = Date.now();
-    const contourSvgPath = renderContourAsVector
-      ? buildContourSvgPath(
-          contour.loops,
-          STAGE_DIM,
-          STAGE_DIM,
-          es.width,
-          es.height
-        )
-      : '';
+    const sx = es.width / STAGE_DIM;
+    const sy = es.height / STAGE_DIM;
+    const contourStrokeScale = Math.min(sx, sy);
+    const hasVectorContour =
+      renderContourAsVector && prevContourShow && contour.loops.length > 0;
 
-    if (es.format === 'png' || es.format === 'jpg') {
-      downloadDataUrl(dataUrl, `collage-${stamp}.${es.format}`);
-    } else if (es.format === 'svg') {
-      // Bitmap of the photo collage + true vector contour path on top.
-      const contourSvg =
-        prevContourShow && contourSvgPath
-          ? `<path d="${contourSvgPath}" fill="none" stroke="${settings.contourColor}" stroke-width="${
-              settings.contourThickness
-            }" stroke-linejoin="miter"/>`
-          : '';
-      const svg = `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${es.width} ${es.height}"><image href="${dataUrl}" width="${es.width}" height="${es.height}"/>${contourSvg}</svg>`;
-      downloadDataUrl(
-        'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-        `collage-${stamp}.svg`
-      );
-    } else if (es.format === 'pdf') {
-      const { default: jsPDF } = await import('jspdf');
-      const orientation = es.width >= es.height ? 'landscape' : 'portrait';
-      const pdf = new jsPDF({
-        unit: 'px',
-        format: [es.width, es.height],
-        orientation,
-        hotfixes: ['px_scaling'],
-      });
-      // Bitmap photo collage as background
-      pdf.addImage(
-        dataUrl,
-        mime === 'image/jpeg' ? 'JPEG' : 'PNG',
-        0,
-        0,
-        es.width,
-        es.height,
-        undefined,
-        'FAST'
-      );
-      // Vector contour overlay
-      if (prevContourShow && contour.loops.length > 0) {
-        const sx = es.width / STAGE_DIM;
-        const sy = es.height / STAGE_DIM;
-        const rgb = hexToRgb(settings.contourColor);
-        pdf.setDrawColor(rgb.r, rgb.g, rgb.b);
-        pdf.setLineWidth(settings.contourThickness * Math.min(sx, sy));
-        for (const loop of contour.loops) {
-          for (let i = 0; i < loop.length; i++) {
-            const a = loop[i];
-            const b = loop[(i + 1) % loop.length];
-            pdf.line(a.x * sx, a.y * sy, b.x * sx, b.y * sy);
+    await downloadExport({
+      format: es.format,
+      dataUrl,
+      mime,
+      width: es.width,
+      height: es.height,
+      baseName: `collage-${Date.now()}`,
+      hooks: hasVectorContour
+        ? {
+            svgExtras: `<path d="${contourLoopsToSvgPath(
+              contour.loops,
+              sx,
+              sy
+            )}" fill="none" stroke="${settings.contourColor}" stroke-width="${
+              settings.contourThickness * contourStrokeScale
+            }" stroke-linejoin="miter" stroke-linecap="butt"/>`,
+            pdfOverlay: (pdf) => {
+              const rgb = hexToRgb(settings.contourColor);
+              pdf.setDrawColor(rgb.r, rgb.g, rgb.b);
+              pdf.setLineWidth(settings.contourThickness * contourStrokeScale);
+              pdf.setLineJoin('miter');
+              pdf.setLineCap('butt');
+              for (const loop of contour.loops) {
+                if (loop.length === 0) continue;
+                pdf.moveTo(loop[0].x * sx, loop[0].y * sy);
+                for (let i = 1; i < loop.length; i++) {
+                  pdf.lineTo(loop[i].x * sx, loop[i].y * sy);
+                }
+                pdf.close();
+                pdf.stroke();
+              }
+            },
           }
-        }
-      }
-      pdf.save(`collage-${stamp}.pdf`);
-    }
+        : undefined,
+    });
+
     onExportRequest(false);
   };
 
@@ -393,15 +428,132 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     return selectedShape.name;
   }, [selectedShape]);
 
-  // ---------- Stage zoom (visual only for now) ----------
+  // ---------- Stage zoom ----------
   const [zoom, setZoom] = useState(1);
-  const zoomIn = () => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)));
-  const zoomOut = () => setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2)));
-  const fit = () => setZoom(1);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  // Pending zoom-to-cursor anchor: the content-space point that should stay
+  // under the cursor after the next zoom-driven re-render.
+  const zoomAnchorRef = useRef<{
+    clientX: number;
+    clientY: number;
+    contentX: number;
+    contentY: number;
+  } | null>(null);
+
+  const zoomIn = () => setZoom((z) => clampZoom(+(z + 0.1).toFixed(2)));
+  const zoomOut = () => setZoom((z) => clampZoom(+(z - 0.1).toFixed(2)));
+  const fit = () => {
+    zoomAnchorRef.current = null;
+    setZoom(1);
+  };
+
+  // Scroll-wheel zoom (zoom-to-cursor). Attached as a native, non-passive
+  // listener because React's synthetic onWheel can't preventDefault.
+  useEffect(() => {
+    const el = stageInnerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const wrap = el.querySelector('.cm-canvas-wrap') as HTMLElement | null;
+      if (!wrap) return;
+      const old = zoomRef.current;
+      // Exponential factor → smooth, framerate-independent zoom.
+      const next = clampZoom(+(old * Math.exp(-e.deltaY * 0.0015)).toFixed(3));
+      if (next === old) return;
+      const rect = wrap.getBoundingClientRect();
+      zoomAnchorRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        contentX: (e.clientX - rect.left) / old,
+        contentY: (e.clientY - rect.top) / old,
+      };
+      setZoom(next);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // After a zoom-to-cursor change commits, nudge scroll so the anchored point
+  // stays under the cursor. useLayoutEffect avoids a visible jump.
+  useLayoutEffect(() => {
+    const anchor = zoomAnchorRef.current;
+    const el = stageInnerRef.current;
+    if (!anchor || !el) return;
+    zoomAnchorRef.current = null;
+    const wrap = el.querySelector('.cm-canvas-wrap') as HTMLElement | null;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const pointScreenX = rect.left + anchor.contentX * zoom;
+    const pointScreenY = rect.top + anchor.contentY * zoom;
+    el.scrollLeft += pointScreenX - anchor.clientX;
+    el.scrollTop += pointScreenY - anchor.clientY;
+  }, [zoom]);
 
   useEffect(() => {
     onPhotoCountChange(photos.length);
   }, [photos.length, onPhotoCountChange]);
+
+  useEffect(() => {
+    if (editingPhotoId && !editingPhoto) setEditingPhotoId(null);
+  }, [editingPhoto, editingPhotoId]);
+
+  // ---------- Persist last session (debounced so slider drags don't thrash) ----------
+  useEffect(() => {
+    const id = setTimeout(() => {
+      saveLastSession({ settings, shape: selectedShape });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [settings, selectedShape]);
+
+  // ---------- Clear "active profile" highlight once the look diverges ----------
+  useEffect(() => {
+    if (!activeProfileId) return;
+    const active = profiles.find((p) => p.id === activeProfileId);
+    if (!active) {
+      setActiveProfileId(null);
+      return;
+    }
+    const matches =
+      JSON.stringify(active.settings) === JSON.stringify(settings) &&
+      active.shape.id === selectedShape.id &&
+      active.shape.d === selectedShape.d &&
+      active.shape.viewBox === selectedShape.viewBox;
+    if (!matches) setActiveProfileId(null);
+  }, [settings, selectedShape, activeProfileId, profiles]);
+
+  // ---------- Profile CRUD ----------
+  const handleSaveProfile = (name: string) => {
+    const profile = createProfile(name, { settings, shape: selectedShape });
+    const next = [profile, ...profiles].slice(0, 50);
+    setProfiles(next);
+    saveProfiles(next);
+    setActiveProfileId(profile.id);
+  };
+
+  const handleApplyProfile = (id: string) => {
+    const profile = profiles.find((p) => p.id === id);
+    if (!profile) return;
+    setSettings(mergeSettings(DEFAULT_SETTINGS, profile.settings));
+    setSelectedShape(profile.shape);
+    setActiveProfileId(id);
+  };
+
+  const handleUpdateProfile = (id: string) => {
+    const next = profiles.map((p) =>
+      p.id === id ? { ...p, settings, shape: selectedShape, createdAt: Date.now() } : p
+    );
+    setProfiles(next);
+    saveProfiles(next);
+    setActiveProfileId(id);
+  };
+
+  const handleDeleteProfile = (id: string) => {
+    const next = profiles.filter((p) => p.id !== id);
+    setProfiles(next);
+    saveProfiles(next);
+    if (activeProfileId === id) setActiveProfileId(null);
+  };
 
   return (
     <main className="cm-main">
@@ -452,10 +604,11 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
               showDetections={settings.showDetections}
               closeUp={settings.closeUp}
               closeUpTightness={settings.closeUpTightness}
-              contourLoops={contour.loops}
+              contourPath={contour.path}
               contourShow={settings.contourShow}
               contourThickness={settings.contourThickness}
               contourColor={settings.contourColor}
+              onEditPhoto={setEditingPhotoId}
             />
             {isDraggingPhotos && (
               <div className="cm-drop-overlay">Drop images to add</div>
@@ -492,7 +645,15 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         onShuffle={handleShuffle}
         onClearPhotos={handleClearPhotos}
         onRedetect={handleRedetect}
+        onEditPhoto={setEditingPhotoId}
+        onDeletePhoto={handleDeletePhoto}
         analyzing={analyzing}
+        profiles={profiles}
+        activeProfileId={activeProfileId}
+        onSaveProfile={handleSaveProfile}
+        onApplyProfile={handleApplyProfile}
+        onDeleteProfile={handleDeleteProfile}
+        onUpdateProfile={handleUpdateProfile}
       />
 
       <input
@@ -510,6 +671,14 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         onExport={handleExport}
         previewLabel={selectedShape.name}
         bgColor={settings.bgColor}
+      />
+
+      <FrameEditorModal
+        photo={editingPhoto}
+        closeUpTightness={settings.closeUpTightness}
+        onClose={() => setEditingPhotoId(null)}
+        onSave={handleSaveManualFrame}
+        onReset={handleResetManualFrame}
       />
     </main>
   );
@@ -531,43 +700,4 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
     img.onerror = () => resolve(null);
     img.src = src;
   });
-}
-
-function downloadDataUrl(url: string, filename: string) {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
-function buildContourSvgPath(
-  loops: { x: number; y: number }[][],
-  fromW: number,
-  fromH: number,
-  toW: number,
-  toH: number
-): string {
-  if (loops.length === 0) return '';
-  const sx = toW / fromW;
-  const sy = toH / fromH;
-  return loops
-    .map((loop) => {
-      if (loop.length === 0) return '';
-      const head = `M${(loop[0].x * sx).toFixed(2)} ${(loop[0].y * sy).toFixed(2)}`;
-      const tail = loop
-        .slice(1)
-        .map((p) => `L${(p.x * sx).toFixed(2)} ${(p.y * sy).toFixed(2)}`)
-        .join('');
-      return head + tail + 'Z';
-    })
-    .join(' ');
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return { r: 0, g: 0, b: 0 };
-  const n = parseInt(m[1], 16);
-  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
 }

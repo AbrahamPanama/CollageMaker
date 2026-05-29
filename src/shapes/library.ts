@@ -27,6 +27,8 @@ export const BASIC_SHAPE_BY_ID: Record<string, BasicShape> = Object.fromEntries(
   BASIC_SHAPES.map((s) => [s.id, s])
 );
 
-export function shapeToSvgText(s: BasicShape): string {
+// Accepts anything carrying a path + viewBox — basic shapes, user shapes, or
+// the SelectedShape stored in profiles/sessions.
+export function shapeToSvgText(s: { d: string; viewBox: string }): string {
   return `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="${s.viewBox}"><path d="${s.d}" fill="black"/></svg>`;
 }

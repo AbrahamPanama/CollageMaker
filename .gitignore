@@ -50,3 +50,4 @@ src-tauri/gen
 
 # Release artifacts
 release
+release-artifacts/
