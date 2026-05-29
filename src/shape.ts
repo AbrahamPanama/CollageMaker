@@ -13,6 +13,10 @@ export type TransformedShape = {
 export function parseShapePolyline(svgText: string, segments = 600): ParsedShape {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgText, 'image/svg+xml');
+  if (doc.querySelector('parsererror')) {
+    throw new Error('SVG could not be parsed');
+  }
+
   const svgEl = doc.querySelector('svg');
   const pathEl = doc.querySelector('path');
   if (!svgEl || !pathEl) {
@@ -20,6 +24,10 @@ export function parseShapePolyline(svgText: string, segments = 600): ParsedShape
   }
 
   const d = pathEl.getAttribute('d') ?? '';
+  if (!d.trim()) {
+    throw new Error('SVG path is empty');
+  }
+
   const viewBox = readViewBox(svgEl);
 
   const ns = 'http://www.w3.org/2000/svg';
@@ -34,16 +42,25 @@ export function parseShapePolyline(svgText: string, segments = 600): ParsedShape
   tempSvg.appendChild(tempPath);
   document.body.appendChild(tempSvg);
 
-  const totalLength = tempPath.getTotalLength();
-  const points: Point[] = [];
-  for (let i = 0; i < segments; i++) {
-    const p = tempPath.getPointAtLength((i / segments) * totalLength);
-    points.push({ x: p.x, y: p.y });
+  try {
+    const totalLength = tempPath.getTotalLength();
+    if (!Number.isFinite(totalLength) || totalLength <= 0) {
+      throw new Error('SVG path has no measurable outline');
+    }
+
+    const points: Point[] = [];
+    for (let i = 0; i < segments; i++) {
+      const p = tempPath.getPointAtLength((i / segments) * totalLength);
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+        throw new Error('SVG path produced invalid coordinates');
+      }
+      points.push({ x: p.x, y: p.y });
+    }
+
+    return { points, viewBox };
+  } finally {
+    document.body.removeChild(tempSvg);
   }
-
-  document.body.removeChild(tempSvg);
-
-  return { points, viewBox };
 }
 
 function readViewBox(svgEl: SVGSVGElement): ViewBox {
@@ -51,11 +68,13 @@ function readViewBox(svgEl: SVGSVGElement): ViewBox {
   if (vbAttr) {
     const parts = vbAttr.split(/[\s,]+/).map(Number);
     if (parts.length === 4 && parts.every((n) => !Number.isNaN(n))) {
-      return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+      if (parts[2] > 0 && parts[3] > 0) {
+        return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+      }
     }
   }
-  const w = Number(svgEl.getAttribute('width')) || 100;
-  const h = Number(svgEl.getAttribute('height')) || 100;
+  const w = parseFloat(svgEl.getAttribute('width') ?? '') || 100;
+  const h = parseFloat(svgEl.getAttribute('height') ?? '') || 100;
   return { x: 0, y: 0, w, h };
 }
 
@@ -64,9 +83,17 @@ export function transformPolyline(
   viewBox: ViewBox,
   target: ViewBox
 ): TransformedShape {
+  if (points.length < 3 || viewBox.w <= 0 || viewBox.h <= 0) {
+    throw new Error('Shape outline is invalid');
+  }
+
   const sx = target.w / viewBox.w;
   const sy = target.h / viewBox.h;
   const s = Math.min(sx, sy);
+  if (!Number.isFinite(s) || s <= 0) {
+    throw new Error('Shape cannot be scaled into the stage');
+  }
+
   const renderedW = viewBox.w * s;
   const renderedH = viewBox.h * s;
   const dx = target.x + (target.w - renderedW) / 2 - viewBox.x * s;

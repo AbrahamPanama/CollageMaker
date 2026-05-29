@@ -24,6 +24,7 @@ function manualChunks(id: string) {
 }
 
 export default defineConfig(() => ({
+  base: './',
   plugins: react(),
   clearScreen: false,
   server: {

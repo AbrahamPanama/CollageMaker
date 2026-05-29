@@ -3,7 +3,7 @@ import type { ChangeEvent, DragEvent, PointerEvent as ReactPointerEvent } from '
 import type Konva from 'konva';
 
 import { BASIC_SHAPES, shapeToSvgText } from '../shapes/library';
-import { parseShapePolyline, polygonArea, transformPolyline } from '../shape';
+import { parseShapePolyline, polygonArea, type ParsedShape, transformPolyline } from '../shape';
 import {
   assignPhotosToCells,
   findAutoParamsForCount,
@@ -104,15 +104,17 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
   // never need to re-resolve it against the library. This keeps profiles and
   // restored sessions rendering correctly even if the source user-shape was
   // later deleted from the library.
-  const activeShapeSvg = useMemo(
-    () => shapeToSvgText(selectedShape),
+  const parsedState = useMemo(
+    () => parseSelectedShapeOrDefault(selectedShape),
     [selectedShape]
   );
+  const parsed = parsedState.parsed;
 
-  const parsed = useMemo(
-    () => parseShapePolyline(activeShapeSvg, 600),
-    [activeShapeSvg]
-  );
+  useEffect(() => {
+    if (!parsedState.usedFallback) return;
+    console.warn(`Falling back from unreadable SVG shape "${selectedShape.name}".`);
+    setSelectedShape(DEFAULT_SHAPE);
+  }, [parsedState.usedFallback, selectedShape.name]);
 
   const transformed = useMemo(
     () =>
@@ -700,4 +702,38 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
     img.onerror = () => resolve(null);
     img.src = src;
   });
+}
+
+function parseSelectedShapeOrDefault(shape: SelectedShape): {
+  parsed: ParsedShape;
+  usedFallback: boolean;
+} {
+  try {
+    return {
+      parsed: parseShapePolyline(shapeToSvgText(shape), 600),
+      usedFallback: false,
+    };
+  } catch (error) {
+    console.warn('Unable to parse selected SVG shape', error);
+    try {
+      return {
+        parsed: parseShapePolyline(shapeToSvgText(DEFAULT_SHAPE), 600),
+        usedFallback: true,
+      };
+    } catch (fallbackError) {
+      console.error('Unable to parse fallback SVG shape', fallbackError);
+      return {
+        parsed: {
+          points: [
+            { x: 8, y: 8 },
+            { x: 92, y: 8 },
+            { x: 92, y: 92 },
+            { x: 8, y: 92 },
+          ],
+          viewBox: { x: 0, y: 0, w: 100, h: 100 },
+        },
+        usedFallback: true,
+      };
+    }
+  }
 }
