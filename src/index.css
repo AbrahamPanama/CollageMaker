@@ -82,25 +82,28 @@ input[type="number"], input[type="text"] {
 }
 .cm-brand { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
 .cm-logo {
-  width: 22px; height: 22px;
+  width: 24px; height: 24px;
   flex-shrink: 0;
   display: block;
-  filter: drop-shadow(0 0 6px rgba(34, 224, 122, .18));
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .35));
 }
-.cm-logo-shell { fill: #0a0a0b; stroke: var(--line-strong); stroke-width: 2; }
+.cm-logo-shell { fill: #fffdfa; stroke: #d9dde4; stroke-width: 2; }
 .cm-logo-heart-outline {
   fill: none;
-  stroke: var(--accent);
-  stroke-width: 3.2;
-  stroke-linejoin: round;
+  stroke: #ff2437;
+  stroke-width: 1.7;
+  stroke-linejoin: miter;
+  shape-rendering: crispEdges;
 }
-.cm-logo-tile { stroke: #0a0a0b; stroke-width: 1.5; }
-.cm-logo-tile-a { fill: var(--accent); }
-.cm-logo-tile-b { fill: #f8fafc; }
-.cm-logo-tile-c { fill: #38bdf8; }
-.cm-logo-tile-d { fill: #e11d48; }
-.cm-logo-tile-e { fill: #f59e0b; }
-.cm-logo-tile-f { fill: #a78bfa; }
+.cm-logo-tile { stroke: #fffdfa; stroke-width: 1.15; shape-rendering: crispEdges; }
+.cm-logo-tile-a { fill: #7fd7e6; }
+.cm-logo-tile-b { fill: #91bdf0; }
+.cm-logo-tile-c { fill: #b9aef0; }
+.cm-logo-tile-d { fill: #e7a4cc; }
+.cm-logo-tile-e { fill: #f0a3a3; }
+.cm-logo-tile-f { fill: #f5c27b; }
+.cm-logo-tile-g { fill: #f5d45d; }
+.cm-logo-tile-h { fill: #ade6c8; }
 .cm-brand-name {
   font-family: "Archivo Black", "Archivo", sans-serif;
   font-size: 17px; line-height: 1; color: var(--ink);
