@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { BASIC_SHAPES, type BasicShape } from '../shapes/library';
 import {
   loadUserShapes,
+  normalizeUserShapeGeometries,
   parseUploadedSvg,
   saveUserShapes,
   type UserShape,
@@ -44,6 +45,13 @@ export function ShapeBrowser({ selectedId, onSelect }: Props) {
     saveUserShapes(next);
   };
 
+  useEffect(() => {
+    const normalized = normalizeUserShapeGeometries(userShapes);
+    if (JSON.stringify(normalized) !== JSON.stringify(userShapes)) {
+      persist(normalized);
+    }
+  }, []);
+
   const handleUpload = async (file: File | undefined) => {
     if (!file) return;
     if (!/svg/i.test(file.type) && !/\.svg$/i.test(file.name)) {
@@ -53,7 +61,7 @@ export function ShapeBrowser({ selectedId, onSelect }: Props) {
     const text = await file.text();
     const shape = parseUploadedSvg(text, file.name);
     if (!shape) {
-      alert("Couldn't read a shape from this SVG. Try one with a single <path>.");
+      alert("Couldn't read a usable shape from this SVG. Try a simpler file with one reasonably sized path.");
       return;
     }
     const next = [shape, ...userShapes].slice(0, 24);

@@ -1,5 +1,8 @@
 // User-uploaded SVG shapes, persisted in localStorage.
 
+import { formatViewBox } from './shape';
+import type { ViewBox } from './types';
+
 export type UserShape = {
   id: string;
   name: string;
@@ -9,13 +12,22 @@ export type UserShape = {
 
 const USER_SHAPES_KEY = 'collagemaker:userShapes:v1';
 const MAX_USER_SHAPES = 24;
-const MAX_PATH_DATA_LENGTH = 250_000;
+const MAX_STORAGE_LENGTH = 3_000_000;
+const MAX_PATH_DATA_LENGTH = 120_000;
+const MAX_PATH_NUMBER_COUNT = 8_000;
+const MAX_PATH_COMMAND_COUNT = 4_000;
+const MAX_ABS_COORDINATE = 1_000_000_000;
 const SVG_PATH_DATA_RE = /^[MmZzLlHhVvCcSsQqTtAa0-9eE+.,\-\s]+$/;
+const PATH_TOKEN_RE = /[AaCcHhLlMmQqSsTtVvZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
 
 export function loadUserShapes(): UserShape[] {
   try {
     const raw = localStorage.getItem(USER_SHAPES_KEY);
     if (!raw) return [];
+    if (raw.length > MAX_STORAGE_LENGTH) {
+      saveUserShapes([]);
+      return [];
+    }
     const shapes = sanitizeUserShapes(JSON.parse(raw));
     if (JSON.stringify(shapes) !== raw) saveUserShapes(shapes);
     return shapes;
@@ -79,6 +91,24 @@ export function sanitizeUserShapes(value: unknown): UserShape[] {
   return shapes;
 }
 
+export function isSafeUserShapeData(d: unknown, viewBox: unknown): boolean {
+  return Boolean(
+    typeof d === 'string' &&
+      typeof viewBox === 'string' &&
+      normalizePathData(d) &&
+      normalizeViewBox(viewBox)
+  );
+}
+
+export function normalizeUserShapeGeometries(shapes: UserShape[]): UserShape[] {
+  const normalized: UserShape[] = [];
+  for (const shape of sanitizeUserShapes(shapes)) {
+    const next = normalizeUserShapeGeometry(shape);
+    if (next) normalized.push(next);
+  }
+  return normalized;
+}
+
 function normalizeStoredShape(value: unknown): UserShape | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
@@ -99,12 +129,21 @@ function createUserShape(d: string, viewBox: string, filename: string): UserShap
   const safeViewBox = normalizeViewBox(viewBox);
   if (!safeD || !safeViewBox) return null;
 
+  const geometryViewBox = normalizePathViewBox(safeD, safeViewBox);
+  if (!geometryViewBox) return null;
+
   return {
     id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: normalizeShapeName((filename || 'Untitled').replace(/\.svg$/i, '')),
     d: safeD,
-    viewBox: safeViewBox,
+    viewBox: geometryViewBox,
   };
+}
+
+function normalizeUserShapeGeometry(shape: UserShape): UserShape | null {
+  const viewBox = normalizePathViewBox(shape.d, shape.viewBox);
+  if (!viewBox) return null;
+  return viewBox === shape.viewBox ? shape : { ...shape, viewBox };
 }
 
 function normalizeShapeName(name: string): string {
@@ -115,6 +154,7 @@ function normalizePathData(d: string): string | null {
   const pathData = d.trim();
   if (!pathData || pathData.length > MAX_PATH_DATA_LENGTH) return null;
   if (!SVG_PATH_DATA_RE.test(pathData)) return null;
+  if (!pathDataBounds(pathData)) return null;
   return pathData;
 }
 
@@ -145,6 +185,195 @@ function parseSvgLength(value: string | null): number | null {
   if (!value) return null;
   const n = parseFloat(value);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function normalizePathViewBox(d: string, viewBox: string): string | null {
+  const bounds = pathDataBounds(d);
+  return bounds ? formatViewBox(bounds) : viewBox;
+}
+
+function pathDataBounds(d: string): ViewBox | null {
+  const tokens = d.match(PATH_TOKEN_RE);
+  if (!tokens) return null;
+
+  let numberCount = 0;
+  let commandCount = 0;
+  for (const token of tokens) {
+    if (isCommandToken(token)) commandCount++;
+    else numberCount++;
+  }
+  if (
+    numberCount < 2 ||
+    numberCount > MAX_PATH_NUMBER_COUNT ||
+    commandCount > MAX_PATH_COMMAND_COUNT
+  ) {
+    return null;
+  }
+
+  try {
+    return walkPathBounds(tokens);
+  } catch {
+    return null;
+  }
+}
+
+function walkPathBounds(tokens: string[]): ViewBox | null {
+  let i = 0;
+  let cmd = '';
+  let x = 0;
+  let y = 0;
+  let sx = 0;
+  let sy = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let hasPoint = false;
+
+  const read = () => {
+    if (i >= tokens.length || isCommandToken(tokens[i])) return null;
+    const n = Number(tokens[i++]);
+    if (!Number.isFinite(n) || Math.abs(n) > MAX_ABS_COORDINATE) return null;
+    return n;
+  };
+  const hasNumber = () => i < tokens.length && !isCommandToken(tokens[i]);
+  const add = (px: number, py: number) => {
+    if (
+      !Number.isFinite(px) ||
+      !Number.isFinite(py) ||
+      Math.abs(px) > MAX_ABS_COORDINATE ||
+      Math.abs(py) > MAX_ABS_COORDINATE
+    ) {
+      throw new Error('coordinate out of range');
+    }
+    minX = Math.min(minX, px);
+    minY = Math.min(minY, py);
+    maxX = Math.max(maxX, px);
+    maxY = Math.max(maxY, py);
+    hasPoint = true;
+  };
+  const point = (relative: boolean) => {
+    const px = read();
+    const py = read();
+    if (px === null || py === null) throw new Error('bad point');
+    x = relative ? x + px : px;
+    y = relative ? y + py : py;
+    add(x, y);
+  };
+  const control = (relative: boolean) => {
+    const px = read();
+    const py = read();
+    if (px === null || py === null) throw new Error('bad control');
+    add(relative ? x + px : px, relative ? y + py : py);
+  };
+
+  while (i < tokens.length) {
+    const start = i;
+    if (isCommandToken(tokens[i])) cmd = tokens[i++];
+    if (!cmd) return null;
+    const relative = cmd === cmd.toLowerCase();
+
+    switch (cmd.toUpperCase()) {
+      case 'M': {
+        point(relative);
+        sx = x;
+        sy = y;
+        while (hasNumber()) point(relative);
+        break;
+      }
+      case 'L':
+      case 'T': {
+        while (hasNumber()) point(relative);
+        break;
+      }
+      case 'H': {
+        while (hasNumber()) {
+          const px = read();
+          if (px === null) throw new Error('bad h');
+          x = relative ? x + px : px;
+          add(x, y);
+        }
+        break;
+      }
+      case 'V': {
+        while (hasNumber()) {
+          const py = read();
+          if (py === null) throw new Error('bad v');
+          y = relative ? y + py : py;
+          add(x, y);
+        }
+        break;
+      }
+      case 'C': {
+        while (hasNumber()) {
+          control(relative);
+          control(relative);
+          point(relative);
+        }
+        break;
+      }
+      case 'S':
+      case 'Q': {
+        while (hasNumber()) {
+          control(relative);
+          point(relative);
+        }
+        break;
+      }
+      case 'A': {
+        while (hasNumber()) {
+          const rx = read();
+          const ry = read();
+          const rotation = read();
+          const largeArc = read();
+          const sweep = read();
+          if (
+            rx === null ||
+            ry === null ||
+            rotation === null ||
+            largeArc === null ||
+            sweep === null
+          ) {
+            throw new Error('bad arc');
+          }
+          const px = read();
+          const py = read();
+          if (px === null || py === null) throw new Error('bad arc end');
+          const endX = relative ? x + px : px;
+          const endY = relative ? y + py : py;
+          const arx = Math.abs(rx);
+          const ary = Math.abs(ry);
+          add(x - arx, y - ary);
+          add(x + arx, y + ary);
+          add(endX - arx, endY - ary);
+          add(endX + arx, endY + ary);
+          x = endX;
+          y = endY;
+          add(x, y);
+        }
+        break;
+      }
+      case 'Z': {
+        x = sx;
+        y = sy;
+        add(x, y);
+        break;
+      }
+      default:
+        return null;
+    }
+
+    if (i === start) throw new Error('path parser made no progress');
+  }
+
+  const w = maxX - minX;
+  const h = maxY - minY;
+  if (!hasPoint || w <= 0 || h <= 0) return null;
+  return { x: minX, y: minY, w, h };
+}
+
+function isCommandToken(token: string): boolean {
+  return token.length === 1 && /[AaCcHhLlMmQqSsTtVvZz]/.test(token);
 }
 
 function primitiveToPath(el: Element): string | null {

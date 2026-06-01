@@ -101,21 +101,44 @@ export function transformPolyline(
 
   const transformed = points.map((p) => ({ x: p.x * s + dx, y: p.y * s + dy }));
 
+  return {
+    points: transformed,
+    bbox: boundsFromPoints(transformed),
+  };
+}
+
+export function boundsFromPoints(points: Point[]): ViewBox {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const p of transformed) {
+
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+      throw new Error('Shape contains invalid coordinates');
+    }
     if (p.x < minX) minX = p.x;
     if (p.y < minY) minY = p.y;
     if (p.x > maxX) maxX = p.x;
     if (p.y > maxY) maxY = p.y;
   }
 
-  return {
-    points: transformed,
-    bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
-  };
+  const w = maxX - minX;
+  const h = maxY - minY;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    throw new Error('Shape has no usable bounds');
+  }
+
+  return { x: minX, y: minY, w, h };
+}
+
+export function formatViewBox(viewBox: ViewBox): string {
+  return [viewBox.x, viewBox.y, viewBox.w, viewBox.h].map(formatNumber).join(' ');
+}
+
+function formatNumber(value: number): string {
+  const rounded = Math.abs(value) < 1e-9 ? 0 : Number(value.toFixed(3));
+  return String(rounded);
 }
 
 export function polygonArea(poly: Point[]): number {

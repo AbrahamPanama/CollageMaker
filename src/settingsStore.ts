@@ -7,6 +7,7 @@
 
 import type { Settings } from './components/ControlsPanel';
 import type { SelectedShape } from './components/ShapeBrowser';
+import { isSafeUserShapeData } from './userShapes';
 
 export type SettingsSnapshot = {
   settings: Settings;
@@ -67,8 +68,11 @@ function readJson<T>(key: string, validate: (v: unknown) => T | null): T | null 
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    return validate(JSON.parse(raw));
+    const value = validate(JSON.parse(raw));
+    if (!value) localStorage.removeItem(key);
+    return value;
   } catch {
+    localStorage.removeItem(key);
     return null;
   }
 }
@@ -116,21 +120,11 @@ function isShape(v: unknown): v is SelectedShape {
     typeof o.d === 'string' &&
     o.d.trim().length > 0 &&
     typeof o.viewBox === 'string' &&
-    hasValidViewBox(o.viewBox)
+    isSafeUserShapeData(o.d, o.viewBox)
   );
 }
 
 /** Merge a stored Settings onto current defaults so new keys get sane values. */
 export function mergeSettings(defaults: Settings, stored: Partial<Settings>): Settings {
   return { ...defaults, ...stored };
-}
-
-function hasValidViewBox(viewBox: string): boolean {
-  const nums = viewBox.trim().split(/[\s,]+/).map(Number);
-  return (
-    nums.length === 4 &&
-    nums.every(Number.isFinite) &&
-    nums[2] > 0 &&
-    nums[3] > 0
-  );
 }

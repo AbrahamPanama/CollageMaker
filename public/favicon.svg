@@ -4,34 +4,33 @@
       <path d="M28 7H41V10H48V13H53V17H57V21H59V34H56V38H53V42H49V46H45V50H41V54H36V58H28V54H23V50H19V46H15V42H11V38H8V34H5V21H8V17H12V13H17V10H24V7H28V11H35V7Z"/>
     </clipPath>
   </defs>
-  <rect x="1.5" y="1.5" width="61" height="61" rx="13" fill="#fffdfa" stroke="#d9dde4" stroke-width="2"/>
-  <g clip-path="url(#heart)" stroke="#fffdfa" stroke-width="1.15" shape-rendering="crispEdges">
-    <rect x="2" y="6" width="10" height="12" fill="#7fd7e6"/>
-    <rect x="12" y="6" width="10" height="12" fill="#91bdf0"/>
-    <rect x="22" y="6" width="10" height="12" fill="#b9aef0"/>
-    <rect x="32" y="6" width="10" height="12" fill="#f5c27b"/>
-    <rect x="42" y="6" width="10" height="12" fill="#ade6c8"/>
-    <rect x="52" y="6" width="10" height="12" fill="#7fd7e6"/>
-    <rect x="2" y="18" width="10" height="12" fill="#b9aef0"/>
-    <rect x="12" y="18" width="10" height="12" fill="#e7a4cc"/>
-    <rect x="22" y="18" width="10" height="12" fill="#f0a3a3"/>
-    <rect x="32" y="18" width="10" height="12" fill="#f5c27b"/>
-    <rect x="42" y="18" width="10" height="12" fill="#f5d45d"/>
-    <rect x="52" y="18" width="10" height="12" fill="#ade6c8"/>
-    <rect x="2" y="30" width="10" height="12" fill="#ade6c8"/>
-    <rect x="12" y="30" width="10" height="12" fill="#7fd7e6"/>
-    <rect x="22" y="30" width="10" height="12" fill="#91bdf0"/>
-    <rect x="32" y="30" width="10" height="12" fill="#b9aef0"/>
-    <rect x="42" y="30" width="10" height="12" fill="#e7a4cc"/>
-    <rect x="52" y="30" width="10" height="12" fill="#f0a3a3"/>
-    <rect x="6" y="42" width="12" height="10" fill="#91bdf0"/>
-    <rect x="18" y="42" width="12" height="10" fill="#f0a3a3"/>
-    <rect x="30" y="42" width="12" height="10" fill="#f5d45d"/>
-    <rect x="42" y="42" width="12" height="10" fill="#ade6c8"/>
-    <rect x="54" y="42" width="8" height="10" fill="#7fd7e6"/>
-    <rect x="18" y="52" width="12" height="9" fill="#b9aef0"/>
-    <rect x="30" y="52" width="12" height="9" fill="#e7a4cc"/>
-    <rect x="42" y="52" width="12" height="9" fill="#f0a3a3"/>
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="#0a0a0b"/>
+  <g clip-path="url(#heart)" fill="#34e08a" stroke="#0a0a0b" stroke-width="1.5" shape-rendering="crispEdges">
+    <rect x="2" y="6" width="10" height="12"/>
+    <rect x="12" y="6" width="10" height="12"/>
+    <rect x="22" y="6" width="10" height="12"/>
+    <rect x="32" y="6" width="10" height="12"/>
+    <rect x="42" y="6" width="10" height="12"/>
+    <rect x="52" y="6" width="10" height="12"/>
+    <rect x="2" y="18" width="10" height="12"/>
+    <rect x="12" y="18" width="10" height="12"/>
+    <rect x="22" y="18" width="10" height="12"/>
+    <rect x="32" y="18" width="10" height="12"/>
+    <rect x="42" y="18" width="10" height="12"/>
+    <rect x="52" y="18" width="10" height="12"/>
+    <rect x="2" y="30" width="10" height="12"/>
+    <rect x="12" y="30" width="10" height="12"/>
+    <rect x="22" y="30" width="10" height="12"/>
+    <rect x="32" y="30" width="10" height="12"/>
+    <rect x="42" y="30" width="10" height="12"/>
+    <rect x="52" y="30" width="10" height="12"/>
+    <rect x="6" y="42" width="12" height="10"/>
+    <rect x="18" y="42" width="12" height="10"/>
+    <rect x="30" y="42" width="12" height="10"/>
+    <rect x="42" y="42" width="12" height="10"/>
+    <rect x="54" y="42" width="8" height="10"/>
+    <rect x="18" y="52" width="12" height="9"/>
+    <rect x="30" y="52" width="12" height="9"/>
+    <rect x="42" y="52" width="12" height="9"/>
   </g>
-  <path d="M28 7H41V10H48V13H53V17H57V21H59V34H56V38H53V42H49V46H45V50H41V54H36V58H28V54H23V50H19V46H15V42H11V38H8V34H5V21H8V17H12V13H17V10H24V7H28V11H35V7Z" fill="none" stroke="#ff2437" stroke-width="1.7" stroke-linejoin="miter" shape-rendering="crispEdges"/>
 </svg>

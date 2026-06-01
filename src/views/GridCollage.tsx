@@ -26,6 +26,7 @@ export function GridCollage({ onExportRequest, exportOpen, onPhotoCountChange }:
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
 
   const layout = useMemo(
     () => LAYOUTS.find((l) => l.id === layoutId) ?? LAYOUTS[0],
@@ -51,6 +52,29 @@ export function GridCollage({ onExportRequest, exportOpen, onPhotoCountChange }:
   useEffect(() => {
     onPhotoCountChange(filledCount);
   }, [filledCount, onPhotoCountChange]);
+
+  // Capture a thumbnail for the export modal preview when it opens.
+  useEffect(() => {
+    if (!exportOpen) {
+      setPreviewSrc(null);
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      try {
+        setPreviewSrc(
+          stage.toDataURL({
+            mimeType: 'image/png',
+            pixelRatio: 360 / Math.max(stageW, stageH),
+          })
+        );
+      } catch (e) {
+        console.warn('Preview capture failed', e);
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [exportOpen, stageW, stageH]);
 
   const handlePickPhoto = (idx: number) => {
     setActiveSlot(idx);
@@ -231,6 +255,7 @@ export function GridCollage({ onExportRequest, exportOpen, onPhotoCountChange }:
         onClose={() => onExportRequest(false)}
         onExport={handleExport}
         previewLabel={`${layout.name} ${aspect.label}`}
+        previewSrc={previewSrc}
         bgColor={borderColor}
         aspectRatio={stageW / stageH}
         allowTransparency={false}

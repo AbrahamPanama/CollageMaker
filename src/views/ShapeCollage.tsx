@@ -3,7 +3,13 @@ import type { ChangeEvent, DragEvent, PointerEvent as ReactPointerEvent } from '
 import type Konva from 'konva';
 
 import { BASIC_SHAPES, shapeToSvgText } from '../shapes/library';
-import { parseShapePolyline, polygonArea, type ParsedShape, transformPolyline } from '../shape';
+import {
+  boundsFromPoints,
+  parseShapePolyline,
+  polygonArea,
+  type ParsedShape,
+  transformPolyline,
+} from '../shape';
 import {
   assignPhotosToCells,
   findAutoParamsForCount,
@@ -29,6 +35,7 @@ import {
   saveProfiles,
   type Profile,
 } from '../settingsStore';
+import { isSafeUserShapeData } from '../userShapes';
 
 const STAGE_DIM = 600;
 const PADDING = 16;
@@ -97,6 +104,10 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     scrollTop: number;
   } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+
+  // Export preview: a transparent thumbnail captured when the modal opens.
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [capturingPreview, setCapturingPreview] = useState(false);
 
   // ---------- Active mask SVG ----------
   // Build directly from the selected shape's own path data. `selectedShape`
@@ -496,6 +507,41 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     onPhotoCountChange(photos.length);
   }, [photos.length, onPhotoCountChange]);
 
+  // Capture a transparent thumbnail (cells + contour, no background) whenever
+  // the export modal opens, so the preview reflects the real collage. Rendering
+  // it transparent lets the modal show it over either a solid bg or a checker.
+  useEffect(() => {
+    if (!exportOpen) {
+      setPreviewSrc(null);
+      return;
+    }
+    let cancelled = false;
+    setCapturingPreview(true);
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const stage = stageRef.current;
+        if (stage) {
+          try {
+            const url = stage.toDataURL({
+              mimeType: 'image/png',
+              pixelRatio: 360 / (STAGE_DIM * zoom),
+            });
+            setPreviewSrc(url);
+          } catch (e) {
+            console.warn('Preview capture failed', e);
+          }
+        }
+        setCapturingPreview(false);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      setCapturingPreview(false);
+    };
+  }, [exportOpen, zoom]);
+
   useEffect(() => {
     if (editingPhotoId && !editingPhoto) setEditingPhotoId(null);
   }, [editingPhoto, editingPhotoId]);
@@ -599,7 +645,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
               photos={photos}
               assignments={assignments}
               bgColor={settings.bgColor}
-              bgTransparent={settings.bgTransparent}
+              bgTransparent={settings.bgTransparent || capturingPreview}
               outlineColor="#22e07a"
               gap={settings.gap}
               showOutline={settings.showOutline}
@@ -672,6 +718,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         onClose={() => onExportRequest(false)}
         onExport={handleExport}
         previewLabel={selectedShape.name}
+        previewSrc={previewSrc}
         bgColor={settings.bgColor}
       />
 
@@ -709,8 +756,14 @@ function parseSelectedShapeOrDefault(shape: SelectedShape): {
   usedFallback: boolean;
 } {
   try {
+    if (shape.source === 'user' && !isSafeUserShapeData(shape.d, shape.viewBox)) {
+      throw new Error('Custom SVG exceeds complexity limits');
+    }
     return {
-      parsed: parseShapePolyline(shapeToSvgText(shape), 600),
+      parsed: normalizeParsedShapeForStage(
+        parseShapePolyline(shapeToSvgText(shape), 600),
+        shape.source
+      ),
       usedFallback: false,
     };
   } catch (error) {
@@ -736,4 +789,12 @@ function parseSelectedShapeOrDefault(shape: SelectedShape): {
       };
     }
   }
+}
+
+function normalizeParsedShapeForStage(
+  parsed: ParsedShape,
+  source: SelectedShape['source']
+): ParsedShape {
+  if (source !== 'user') return parsed;
+  return { ...parsed, viewBox: boundsFromPoints(parsed.points) };
 }

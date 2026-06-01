@@ -1,6 +1,6 @@
 [package]
 name = "collage-maker"
-version = "0.2.1"
+version = "0.2.2"
 description = "Vexel-style photo mosaics in any shape"
 authors = ["you"]
 edition = "2021"

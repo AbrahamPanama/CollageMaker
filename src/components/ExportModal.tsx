@@ -33,11 +33,17 @@ const FORMATS: Array<{ id: ExportFormat; label: string; desc: string }> = [
 
 const MAX_EXPORT_DIM = 7200;
 
+// Checkerboard shown behind the preview when exporting transparent.
+const CHECKER_BG =
+  'linear-gradient(45deg, #2a2a2c 25%, transparent 25%), linear-gradient(-45deg, #2a2a2c 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2c 75%), linear-gradient(-45deg, transparent 75%, #2a2a2c 75%)';
+
 type Props = {
   open: boolean;
   onClose: () => void;
   onExport: (settings: ExportSettings) => void;
   previewLabel: string;
+  /** Live thumbnail of the collage, captured transparent (cells + contour, no bg). */
+  previewSrc?: string | null;
   bgColor: string;
   aspectRatio?: number;
   allowTransparency?: boolean;
@@ -48,6 +54,7 @@ export function ExportModal({
   onClose,
   onExport,
   previewLabel,
+  previewSrc,
   bgColor,
   aspectRatio = 1,
   allowTransparency = true,
@@ -206,21 +213,20 @@ export function ExportModal({
               <div
                 className="cm-preview-img"
                 style={{
+                  aspectRatio: String(safeAspect),
                   backgroundColor: finalTransparent ? 'transparent' : bgColor,
-                  backgroundImage: finalTransparent
-                    ? 'linear-gradient(45deg, #2a2a2c 25%, transparent 25%), linear-gradient(-45deg, #2a2a2c 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2c 75%), linear-gradient(-45deg, transparent 75%, #2a2a2c 75%)'
-                    : 'none',
-                  backgroundSize: '12px 12px',
-                  backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0',
+                  backgroundImage: finalTransparent ? CHECKER_BG : 'none',
+                  backgroundSize: '14px 14px',
+                  backgroundPosition: '0 0, 0 7px, 7px -7px, -7px 0',
                 }}
               >
-                <span
-                  style={{
-                    color: finalTransparent ? '#aaa' : pickLegibleText(bgColor),
-                  }}
-                >
-                  {previewLabel}
-                </span>
+                {previewSrc ? (
+                  <img className="cm-preview-thumb" src={previewSrc} alt="Collage preview" />
+                ) : (
+                  <span style={{ color: finalTransparent ? '#aaa' : pickLegibleText(bgColor) }}>
+                    {previewLabel}
+                  </span>
+                )}
               </div>
               <dl className="cm-preview-meta">
                 <div><dt>Format</dt><dd>{format.toUpperCase()}</dd></div>
