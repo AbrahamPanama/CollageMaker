@@ -11,6 +11,7 @@ import {
 type Props = {
   photo: Photo | null;
   closeUpTightness: number;
+  aspectRatio?: number;
   onClose: () => void;
   onSave: (photoId: string, frame: ManualFrame) => void;
   onReset: (photoId: string) => void;
@@ -28,6 +29,7 @@ type DragState = {
 export function FrameEditorModal({
   photo,
   closeUpTightness,
+  aspectRatio = 1,
   onClose,
   onSave,
   onReset,
@@ -71,6 +73,7 @@ export function FrameEditorModal({
   }, [box.h, box.w, closeUpTightness, frame, photo]);
 
   if (!photo || !placement) return null;
+  const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -146,6 +149,7 @@ export function FrameEditorModal({
           <div
             ref={cropRef}
             className={`cm-frame-crop ${isDragging ? 'is-dragging' : ''}`}
+            style={{ aspectRatio: String(safeAspect) }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerEnd}

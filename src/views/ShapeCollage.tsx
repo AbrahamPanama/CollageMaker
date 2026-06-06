@@ -390,43 +390,48 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const hasVectorContour =
       renderContourAsVector && prevContourShow && contour.loops.length > 0;
 
-    await downloadExport({
-      format: es.format,
-      dataUrl,
-      mime,
-      width: es.width,
-      height: es.height,
-      baseName: `collage-${Date.now()}`,
-      hooks: hasVectorContour
-        ? {
-            svgExtras: `<path d="${contourLoopsToSvgPath(
-              contour.loops,
-              sx,
-              sy
-            )}" fill="none" stroke="${settings.contourColor}" stroke-width="${
-              settings.contourThickness * contourStrokeScale
-            }" stroke-linejoin="miter" stroke-linecap="butt"/>`,
-            pdfOverlay: (pdf) => {
-              const rgb = hexToRgb(settings.contourColor);
-              pdf.setDrawColor(rgb.r, rgb.g, rgb.b);
-              pdf.setLineWidth(settings.contourThickness * contourStrokeScale);
-              pdf.setLineJoin('miter');
-              pdf.setLineCap('butt');
-              for (const loop of contour.loops) {
-                if (loop.length === 0) continue;
-                pdf.moveTo(loop[0].x * sx, loop[0].y * sy);
-                for (let i = 1; i < loop.length; i++) {
-                  pdf.lineTo(loop[i].x * sx, loop[i].y * sy);
+    try {
+      const saved = await downloadExport({
+        format: es.format,
+        dataUrl,
+        mime,
+        width: es.width,
+        height: es.height,
+        baseName: `collage-${Date.now()}`,
+        hooks: hasVectorContour
+          ? {
+              svgExtras: `<path d="${contourLoopsToSvgPath(
+                contour.loops,
+                sx,
+                sy
+              )}" fill="none" stroke="${settings.contourColor}" stroke-width="${
+                settings.contourThickness * contourStrokeScale
+              }" stroke-linejoin="miter" stroke-linecap="butt"/>`,
+              pdfOverlay: (pdf) => {
+                const rgb = hexToRgb(settings.contourColor);
+                pdf.setDrawColor(rgb.r, rgb.g, rgb.b);
+                pdf.setLineWidth(settings.contourThickness * contourStrokeScale);
+                pdf.setLineJoin('miter');
+                pdf.setLineCap('butt');
+                for (const loop of contour.loops) {
+                  if (loop.length === 0) continue;
+                  pdf.moveTo(loop[0].x * sx, loop[0].y * sy);
+                  for (let i = 1; i < loop.length; i++) {
+                    pdf.lineTo(loop[i].x * sx, loop[i].y * sy);
+                  }
+                  pdf.close();
+                  pdf.stroke();
                 }
-                pdf.close();
-                pdf.stroke();
-              }
-            },
-          }
-        : undefined,
-    });
+              },
+            }
+          : undefined,
+      });
 
-    onExportRequest(false);
+      if (saved) onExportRequest(false);
+    } catch (e) {
+      console.error('Save failed', e);
+      alert('Save failed. Please pick a different file name or location.');
+    }
   };
 
   // ---------- Stage bar info ----------

@@ -1,8 +1,9 @@
 import { LogoMark } from './LogoMark';
+import type { Mode } from '../App';
 
 type Props = {
-  mode: 'shape' | 'grid';
-  onMode: (m: 'shape' | 'grid') => void;
+  mode: Mode;
+  onMode: (m: Mode) => void;
   photoCount: number;
   onExport: () => void;
 };

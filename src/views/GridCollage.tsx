@@ -150,15 +150,20 @@ export function GridCollage({ onExportRequest, exportOpen, onPhotoCountChange }:
       return;
     }
 
-    await downloadExport({
-      format: es.format,
-      dataUrl,
-      mime,
-      width: es.width,
-      height: es.height,
-      baseName: `grid-collage-${Date.now()}`,
-    });
-    onExportRequest(false);
+    try {
+      const saved = await downloadExport({
+        format: es.format,
+        dataUrl,
+        mime,
+        width: es.width,
+        height: es.height,
+        baseName: `grid-collage-${Date.now()}`,
+      });
+      if (saved) onExportRequest(false);
+    } catch (e) {
+      console.error('Grid save failed', e);
+      alert('Save failed. Please pick a different file name or location.');
+    }
   };
 
   return (

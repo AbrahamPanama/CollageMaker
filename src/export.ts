@@ -6,6 +6,7 @@
 // overlay for SVG/PDF, while PNG/JPG just get the bitmap.
 
 import type { jsPDF as JsPdf } from 'jspdf';
+import { isTauri } from '@tauri-apps/api/core';
 import type { ExportFormat } from './components/ExportModal';
 
 export type ExportMime = 'image/png' | 'image/jpeg';
@@ -27,13 +28,33 @@ export type DownloadExportOptions = {
   hooks?: ExportHooks;
 };
 
-export async function downloadExport(opts: DownloadExportOptions): Promise<void> {
+type ExportPayload = {
+  bytes: Uint8Array;
+  filename: string;
+  mime: string;
+  extension: ExportFormat;
+};
+
+export async function saveExportBytes(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+  extension: ExportFormat
+): Promise<boolean> {
+  return saveExportPayload({ bytes, filename, mime, extension });
+}
+
+export async function downloadExport(opts: DownloadExportOptions): Promise<boolean> {
   const { format, dataUrl, mime, width, height, baseName, hooks } = opts;
   const filename = `${baseName}.${format}`;
 
   if (format === 'png' || format === 'jpg') {
-    downloadDataUrl(dataUrl, filename);
-    return;
+    return saveExportPayload({
+      bytes: dataUrlToBytes(dataUrl),
+      filename,
+      mime,
+      extension: format,
+    });
   }
 
   if (format === 'svg') {
@@ -43,11 +64,12 @@ export async function downloadExport(opts: DownloadExportOptions): Promise<void>
       `<image href="${dataUrl}" width="${width}" height="${height}"/>` +
       (hooks?.svgExtras ?? '') +
       `</svg>`;
-    downloadDataUrl(
-      'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-      filename
-    );
-    return;
+    return saveExportPayload({
+      bytes: new TextEncoder().encode(svg),
+      filename,
+      mime: 'image/svg+xml',
+      extension: 'svg',
+    });
   }
 
   if (format === 'pdf') {
@@ -69,7 +91,70 @@ export async function downloadExport(opts: DownloadExportOptions): Promise<void>
       'FAST'
     );
     hooks?.pdfOverlay?.(pdf);
-    pdf.save(filename);
+    return saveExportPayload({
+      bytes: new Uint8Array(pdf.output('arraybuffer')),
+      filename,
+      mime: 'application/pdf',
+      extension: 'pdf',
+    });
+  }
+
+  return false;
+}
+
+// ---------- Save helpers ----------
+
+async function saveExportPayload(payload: ExportPayload): Promise<boolean> {
+  if (isTauri()) {
+    const [{ save }, { writeFile }] = await Promise.all([
+      import('@tauri-apps/plugin-dialog'),
+      import('@tauri-apps/plugin-fs'),
+    ]);
+    const selectedPath = await save({
+      title: 'Export collage',
+      defaultPath: payload.filename,
+      canCreateDirectories: true,
+      filters: [
+        {
+          name: `${payload.extension.toUpperCase()} file`,
+          extensions: [payload.extension],
+        },
+      ],
+    });
+    if (!selectedPath) return false;
+    await writeFile(ensureExtension(selectedPath, payload.extension), payload.bytes);
+    return true;
+  }
+
+  downloadBlob(payload.bytes, payload.mime, payload.filename);
+  return true;
+}
+
+function ensureExtension(path: string, extension: ExportFormat): string {
+  const lastSegment = path.split(/[\\/]/).pop() ?? path;
+  if (/\.[^./\\]+$/.test(lastSegment)) return path;
+  return `${path}.${extension}`;
+}
+
+function dataUrlToBytes(url: string): Uint8Array {
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/i.exec(url);
+  if (!match) throw new Error('Invalid export data URL');
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] ?? '';
+  const text = isBase64 ? atob(payload) : decodeURIComponent(payload);
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+  return bytes;
+}
+
+function downloadBlob(bytes: Uint8Array, mime: string, filename: string): void {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const blobUrl = URL.createObjectURL(new Blob([buffer], { type: mime }));
+  try {
+    downloadDataUrl(blobUrl, filename);
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   }
 }
 

@@ -3,7 +3,7 @@ import { Header } from './components/Header';
 import { ShapeCollage } from './views/ShapeCollage';
 import { GridCollage } from './views/GridCollage';
 
-type Mode = 'shape' | 'grid';
+export type Mode = 'shape' | 'grid';
 
 export function App() {
   const [mode, setMode] = useState<Mode>('shape');

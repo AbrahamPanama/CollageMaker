@@ -9,6 +9,13 @@ export type ExportSettings = {
   transparent: boolean;
 };
 
+type FixedExportSize = {
+  width: number;
+  height: number;
+  label: string;
+  note: string;
+};
+
 type ResPreset = {
   id: string;
   label: string;
@@ -47,6 +54,8 @@ type Props = {
   bgColor: string;
   aspectRatio?: number;
   allowTransparency?: boolean;
+  fixedSize?: FixedExportSize;
+  preferredFormat?: ExportFormat;
 };
 
 export function ExportModal({
@@ -58,6 +67,8 @@ export function ExportModal({
   bgColor,
   aspectRatio = 1,
   allowTransparency = true,
+  fixedSize,
+  preferredFormat,
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [presetId, setPresetId] = useState<string>('hd');
@@ -68,14 +79,14 @@ export function ExportModal({
   const preset = RES_PRESETS.find((p) => p.id === presetId)!;
   const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
   const presetDims = fitPresetToAspect(preset.w, safeAspect);
-  const w = presetId === 'custom' ? customW : presetDims.w;
-  const h = presetId === 'custom' ? customH : presetDims.h;
+  const w = fixedSize ? fixedSize.width : presetId === 'custom' ? customW : presetDims.w;
+  const h = fixedSize ? fixedSize.height : presetId === 'custom' ? customH : presetDims.h;
   const transparentAvailable =
     allowTransparency && (format === 'png' || format === 'svg' || format === 'pdf');
   const finalTransparent = transparent && transparentAvailable;
   // With both sides clamped to MAX_EXPORT_DIM, the product is bounded too,
   // so a separate pixel-area check would be redundant.
-  const canExport = w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM;
+  const canExport = fixedSize ? w > 0 && h > 0 : w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM;
 
   // When the parent's aspect ratio changes (e.g. the user switched grid
   // layout), recompute the custom height while preserving the user's current
@@ -86,6 +97,10 @@ export function ExportModal({
   useEffect(() => {
     setCustomH(Math.max(1, Math.round(customWRef.current / safeAspect)));
   }, [safeAspect]);
+
+  useEffect(() => {
+    if (open && preferredFormat) setFormat(preferredFormat);
+  }, [open, preferredFormat]);
 
   const estMb = useMemo(() => {
     if (format === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
@@ -128,30 +143,42 @@ export function ExportModal({
               ))}
             </div>
 
-            <h4>Resolution</h4>
-            <div className="cm-res-grid">
-              {RES_PRESETS.map((r) => (
-                <button
-                  key={r.id}
-                  className={`cm-res-tile ${presetId === r.id ? 'is-active' : ''}`}
-                  onClick={() => setPresetId(r.id)}
-                >
-                  <span className="cm-res-label">{r.label}</span>
-                  {r.id !== 'custom' ? (
-                    <span className="cm-res-dim">
-                      {fitPresetToAspect(r.w, safeAspect).w}
-                      <span>×</span>
-                      {fitPresetToAspect(r.w, safeAspect).h}
-                    </span>
-                  ) : (
-                    <span className="cm-res-dim cm-res-dim-custom">— × —</span>
-                  )}
-                  <span className="cm-res-note">{r.note}</span>
-                </button>
-              ))}
-            </div>
+            {fixedSize ? (
+              <>
+                <h4>Print Output</h4>
+                <div className="cm-fixed-export">
+                  <span>{fixedSize.label}</span>
+                  <small>{fixedSize.note}</small>
+                </div>
+              </>
+            ) : (
+              <>
+                <h4>Resolution</h4>
+                <div className="cm-res-grid">
+                  {RES_PRESETS.map((r) => (
+                    <button
+                      key={r.id}
+                      className={`cm-res-tile ${presetId === r.id ? 'is-active' : ''}`}
+                      onClick={() => setPresetId(r.id)}
+                    >
+                      <span className="cm-res-label">{r.label}</span>
+                      {r.id !== 'custom' ? (
+                        <span className="cm-res-dim">
+                          {fitPresetToAspect(r.w, safeAspect).w}
+                          <span>×</span>
+                          {fitPresetToAspect(r.w, safeAspect).h}
+                        </span>
+                      ) : (
+                        <span className="cm-res-dim cm-res-dim-custom">— × —</span>
+                      )}
+                      <span className="cm-res-note">{r.note}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
-            {presetId === 'custom' && (
+            {!fixedSize && presetId === 'custom' && (
               <div className="cm-custom-dims">
                 <label>
                   <span>Width</span>
@@ -230,7 +257,7 @@ export function ExportModal({
               </div>
               <dl className="cm-preview-meta">
                 <div><dt>Format</dt><dd>{format.toUpperCase()}</dd></div>
-                <div><dt>Pixels</dt><dd>{w.toLocaleString()} × {h.toLocaleString()}</dd></div>
+                <div><dt>{fixedSize ? 'Output' : 'Pixels'}</dt><dd>{fixedSize ? fixedSize.label : `${w.toLocaleString()} × ${h.toLocaleString()}`}</dd></div>
                 <div><dt>Bg</dt><dd>{finalTransparent ? 'transparent' : bgColor}</dd></div>
                 <div><dt>Est. size</dt><dd>~{estMb} MB</dd></div>
               </dl>
