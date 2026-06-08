@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Header } from './components/Header';
 import { ShapeCollage } from './views/ShapeCollage';
 import { GridCollage } from './views/GridCollage';
+import { FlipbookMaker } from './views/FlipbookMaker';
 
-export type Mode = 'shape' | 'grid';
+export type Mode = 'shape' | 'grid' | 'flipbook';
 
 export function App() {
   const [mode, setMode] = useState<Mode>('shape');
@@ -24,11 +25,17 @@ export function App() {
           exportOpen={exportOpen}
           onPhotoCountChange={setPhotoCount}
         />
-      ) : (
+      ) : mode === 'grid' ? (
         <GridCollage
           onExportRequest={setExportOpen}
           exportOpen={exportOpen}
           onPhotoCountChange={setPhotoCount}
+        />
+      ) : (
+        <FlipbookMaker
+          onPhotoCountChange={setPhotoCount}
+          onExportRequest={setExportOpen}
+          exportOpen={exportOpen}
         />
       )}
     </div>

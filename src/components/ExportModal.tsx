@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { pickLegibleText } from '../export';
 
 export type ExportFormat = 'png' | 'jpg' | 'pdf' | 'svg';
@@ -51,11 +52,15 @@ type Props = {
   previewLabel: string;
   /** Live thumbnail of the collage, captured transparent (cells + contour, no bg). */
   previewSrc?: string | null;
+  previewContent?: ReactNode;
   bgColor: string;
   aspectRatio?: number;
   allowTransparency?: boolean;
   fixedSize?: FixedExportSize;
   preferredFormat?: ExportFormat;
+  formats?: ExportFormat[];
+  title?: string;
+  description?: string;
 };
 
 export function ExportModal({
@@ -64,11 +69,15 @@ export function ExportModal({
   onExport,
   previewLabel,
   previewSrc,
+  previewContent,
   bgColor,
   aspectRatio = 1,
   allowTransparency = true,
   fixedSize,
   preferredFormat,
+  formats,
+  title = 'Export collage',
+  description = 'Choose a format and resolution for the current canvas.',
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [presetId, setPresetId] = useState<string>('hd');
@@ -76,13 +85,20 @@ export function ExportModal({
   const [customH, setCustomH] = useState(2400);
   const [transparent, setTransparent] = useState(false);
 
+  const formatOptions = useMemo(() => {
+    const allowed = formats && formats.length > 0 ? formats : FORMATS.map((item) => item.id);
+    return FORMATS.filter((item) => allowed.includes(item.id));
+  }, [formats]);
+  const activeFormat = formatOptions.some((item) => item.id === format)
+    ? format
+    : formatOptions[0]?.id ?? 'png';
   const preset = RES_PRESETS.find((p) => p.id === presetId)!;
   const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
   const presetDims = fitPresetToAspect(preset.w, safeAspect);
   const w = fixedSize ? fixedSize.width : presetId === 'custom' ? customW : presetDims.w;
   const h = fixedSize ? fixedSize.height : presetId === 'custom' ? customH : presetDims.h;
   const transparentAvailable =
-    allowTransparency && (format === 'png' || format === 'svg' || format === 'pdf');
+    allowTransparency && (activeFormat === 'png' || activeFormat === 'svg' || activeFormat === 'pdf');
   const finalTransparent = transparent && transparentAvailable;
   // With both sides clamped to MAX_EXPORT_DIM, the product is bounded too,
   // so a separate pixel-area check would be redundant.
@@ -99,15 +115,22 @@ export function ExportModal({
   }, [safeAspect]);
 
   useEffect(() => {
-    if (open && preferredFormat) setFormat(preferredFormat);
-  }, [open, preferredFormat]);
+    if (!open) return;
+    if (preferredFormat && formatOptions.some((item) => item.id === preferredFormat)) {
+      setFormat(preferredFormat);
+      return;
+    }
+    if (!formatOptions.some((item) => item.id === format) && formatOptions[0]) {
+      setFormat(formatOptions[0].id);
+    }
+  }, [format, formatOptions, open, preferredFormat]);
 
   const estMb = useMemo(() => {
-    if (format === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
-    if (format === 'png') return (w * h * 0.0000016 * 1.2).toFixed(1);
-    if (format === 'pdf') return (w * h * 0.0000018 * 1.3).toFixed(1);
+    if (activeFormat === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
+    if (activeFormat === 'png') return (w * h * 0.0000016 * 1.2).toFixed(1);
+    if (activeFormat === 'pdf') return (w * h * 0.0000018 * 1.3).toFixed(1);
     return (w * h * 0.0000004).toFixed(2);
-  }, [format, w, h]);
+  }, [activeFormat, w, h]);
 
   if (!open) return null;
 
@@ -116,8 +139,8 @@ export function ExportModal({
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="cm-modal-head">
           <div>
-            <h2>Export collage</h2>
-            <p>Choose a format and resolution for the current canvas.</p>
+            <h2>{title}</h2>
+            <p>{description}</p>
           </div>
           <button className="cm-icon-btn" onClick={onClose} aria-label="Close">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -130,10 +153,10 @@ export function ExportModal({
           <div className="cm-modal-col">
             <h4>Format</h4>
             <div className="cm-format-list">
-              {FORMATS.map((f) => (
+              {formatOptions.map((f) => (
                 <button
                   key={f.id}
-                  className={`cm-format-row ${format === f.id ? 'is-active' : ''}`}
+                  className={`cm-format-row ${activeFormat === f.id ? 'is-active' : ''}`}
                   onClick={() => setFormat(f.id)}
                 >
                   <span className="cm-format-mark">{f.label}</span>
@@ -227,7 +250,7 @@ export function ExportModal({
                 transparentAvailable
                   ? 'Background fill is omitted'
                   : allowTransparency
-                  ? `Not available for ${format.toUpperCase()}`
+                  ? `Not available for ${activeFormat.toUpperCase()}`
                   : 'This canvas exports with its background'
               }
               checked={finalTransparent}
@@ -238,7 +261,7 @@ export function ExportModal({
             <h4>Preview</h4>
             <div className="cm-preview-card">
               <div
-                className="cm-preview-img"
+                className={`cm-preview-img ${previewContent ? 'is-custom' : ''}`}
                 style={{
                   aspectRatio: String(safeAspect),
                   backgroundColor: finalTransparent ? 'transparent' : bgColor,
@@ -247,7 +270,9 @@ export function ExportModal({
                   backgroundPosition: '0 0, 0 7px, 7px -7px, -7px 0',
                 }}
               >
-                {previewSrc ? (
+                {previewContent ? (
+                  previewContent
+                ) : previewSrc ? (
                   <img className="cm-preview-thumb" src={previewSrc} alt="Collage preview" />
                 ) : (
                   <span style={{ color: finalTransparent ? '#aaa' : pickLegibleText(bgColor) }}>
@@ -256,7 +281,7 @@ export function ExportModal({
                 )}
               </div>
               <dl className="cm-preview-meta">
-                <div><dt>Format</dt><dd>{format.toUpperCase()}</dd></div>
+                <div><dt>Format</dt><dd>{activeFormat.toUpperCase()}</dd></div>
                 <div><dt>{fixedSize ? 'Output' : 'Pixels'}</dt><dd>{fixedSize ? fixedSize.label : `${w.toLocaleString()} × ${h.toLocaleString()}`}</dd></div>
                 <div><dt>Bg</dt><dd>{finalTransparent ? 'transparent' : bgColor}</dd></div>
                 <div><dt>Est. size</dt><dd>~{estMb} MB</dd></div>
@@ -281,14 +306,14 @@ export function ExportModal({
               disabled={!canExport}
               onClick={() => {
                 onExport({
-                  format,
+                  format: activeFormat,
                   width: w,
                   height: h,
                   transparent: finalTransparent,
                 });
               }}
             >
-              Export {format.toUpperCase()}
+              Export {activeFormat.toUpperCase()}
             </button>
           </div>
         </div>
