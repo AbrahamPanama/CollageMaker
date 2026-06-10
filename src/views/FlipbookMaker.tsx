@@ -2,9 +2,12 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent } from 'react';
 import { FrameEditorModal } from '../components/FrameEditorModal';
 import { ExportModal, type ExportSettings } from '../components/ExportModal';
+import { VideoImportModal } from '../components/VideoImportModal';
 import {
+  FLIPBOOK_BLADE_LABEL,
   FLIPBOOK_BLADE_PATH_D,
   FLIPBOOK_BLADE_PATH_TRANSFORM,
+  FLIPBOOK_FRAME_ASPECT,
   FLIPBOOK_BLADE_VIEWBOX,
   getFlipbookBladeBleedSvgPath,
 } from '../flipbook/blade';
@@ -13,6 +16,7 @@ import {
   buildFlipbookBlades,
   buildPrintPages,
   formatFrame,
+  shouldMirrorBackArtworkX,
   type BladeHalf,
   type BladeSide,
   type DuplexMode,
@@ -20,7 +24,11 @@ import {
   type PrintPage,
 } from '../flipbook/logic';
 import { computePhotoPlacement } from '../photoFraming';
+import { loadPhoto } from '../photoIngest';
 import { detectSubject } from '../smartFrame';
+import { revokePhotos } from '../video/bake';
+import { createFrameCache, deriveFrames, getTrimDuration } from '../video/deriveFrames';
+import type { DeriveProgress, ExtractionResult, ExtractionWarning, FrameCache, VideoSource } from '../video/types';
 import type { ManualFrame, Photo } from '../types';
 
 const MIN_FRAMES = 4;
@@ -98,24 +106,80 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   const [isDragging, setIsDragging] = useState(false);
   const [draggedPhotoId, setDraggedPhotoId] = useState<string | null>(null);
   const [dropTargetPhotoId, setDropTargetPhotoId] = useState<string | null>(null);
+  const [videoImportOpen, setVideoImportOpen] = useState(false);
+  const [videoSource, setVideoSource] = useState<VideoSource | null>(null);
+  const [videoWarnings, setVideoWarnings] = useState<ExtractionWarning[]>([]);
+  const [videoProgress, setVideoProgress] = useState<DeriveProgress | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoFrameCacheRef = useRef<FrameCache>(createFrameCache());
+  const ownedVideoPhotosRef = useRef<Photo[]>([]);
+  const skipNextVideoDeriveRef = useRef(false);
+  const videoDeriveSeqRef = useRef(0);
+  const isVideoMode = Boolean(videoSource);
 
   useEffect(() => {
     onPhotoCountChange(photos.length);
   }, [onPhotoCountChange, photos.length]);
 
   useEffect(() => {
-    if (photos.length > frameCount) {
+    if (!isVideoMode && photos.length > frameCount) {
       setFrameCount(Math.min(MAX_FRAMES, Math.max(MIN_FRAMES, photos.length)));
     }
-  }, [frameCount, photos.length]);
+  }, [frameCount, isVideoMode, photos.length]);
+
+  useEffect(() => {
+    return () => {
+      revokeOwnedVideoPhotos();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!videoSource) return;
+    if (skipNextVideoDeriveRef.current) {
+      skipNextVideoDeriveRef.current = false;
+      return;
+    }
+
+    const controller = new AbortController();
+    const sequence = ++videoDeriveSeqRef.current;
+    setVideoProgress({ stage: 'decode', done: 0, total: 1 });
+    setVideoError(null);
+
+    deriveFrames(
+      videoSource,
+      frameCount,
+      videoFrameCacheRef.current,
+      controller.signal,
+      setVideoProgress
+    )
+      .then((result) => {
+        if (controller.signal.aborted || sequence !== videoDeriveSeqRef.current) {
+          revokePhotos(result.photos);
+          return;
+        }
+        replaceWithVideoFrames(videoSource, result);
+        setVideoWarnings(result.warnings);
+        setVideoProgress(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setVideoProgress(null);
+        setVideoError(error instanceof Error ? error.message : 'Could not re-sample the video frames.');
+      });
+
+    return () => controller.abort();
+  }, [frameCount, videoSource]);
 
   const frames = useMemo<FrameSource[]>(() => {
     return Array.from({ length: frameCount }, (_, frame) => {
+      if (isVideoMode) {
+        return { frame, photo: photos[frame] ?? null, repeated: false };
+      }
       const photo = photos.length > 0 ? photos[frame % photos.length] : null;
       return { frame, photo, repeated: photos.length > 0 && frame >= photos.length };
     });
-  }, [frameCount, photos]);
+  }, [frameCount, isVideoMode, photos]);
 
   const blades = useMemo(() => buildFlipbookBlades(frameCount), [frameCount]);
   const printLayout = useMemo(
@@ -149,6 +213,10 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   const ingestFiles = async (files: File[]) => {
     const imageFiles = files.filter((file) => file.type.startsWith('image/'));
     if (imageFiles.length === 0) return;
+    if (videoSource) {
+      clearVideoSource();
+      setPhotos([]);
+    }
     setAnalyzing({ done: 0, total: imageFiles.length });
     try {
       for (let i = 0; i < imageFiles.length; i++) {
@@ -202,6 +270,10 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const handlePhotoDragStart = (event: DragEvent<HTMLDivElement>, photoId: string) => {
+    if (isVideoMode) {
+      event.preventDefault();
+      return;
+    }
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', photoId);
     setDraggedPhotoId(photoId);
@@ -209,6 +281,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const handlePhotoDragOver = (event: DragEvent<HTMLDivElement>, photoId: string) => {
+    if (isVideoMode) return;
     if (!draggedPhotoId || draggedPhotoId === photoId) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
@@ -216,6 +289,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const handlePhotoDrop = (event: DragEvent<HTMLDivElement>, photoId: string) => {
+    if (isVideoMode) return;
     event.preventDefault();
     event.stopPropagation();
     const droppedPhotoId = event.dataTransfer.getData('text/plain') || draggedPhotoId;
@@ -224,6 +298,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const removePhoto = (photoId: string) => {
+    if (isVideoMode) return;
     setPhotos((prev) => prev.filter((photo) => photo.id !== photoId));
     setEditingPhotoId((current) => (current === photoId ? null : current));
     setDraggedPhotoId((current) => (current === photoId ? null : current));
@@ -231,6 +306,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const clearPhotos = () => {
+    clearVideoSource();
     setPhotos([]);
     setEditingPhotoId(null);
   };
@@ -240,12 +316,14 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   );
 
   const saveManualFrame = (photoId: string, frame: ManualFrame) => {
+    if (isVideoMode) return;
     setPhotos((prev) =>
       prev.map((photo) => (photo.id === photoId ? { ...photo, manualFrame: frame } : photo))
     );
   };
 
   const resetManualFrame = (photoId: string) => {
+    if (isVideoMode) return;
     setPhotos((prev) =>
       prev.map((photo) => {
         if (photo.id !== photoId) return photo;
@@ -257,6 +335,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const redetectPhotos = async () => {
+    if (isVideoMode) return;
     if (photos.length === 0) return;
     setAnalyzing({ done: 0, total: photos.length });
     try {
@@ -281,6 +360,10 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
       alert('Flipbook export currently produces print-ready PDF files.');
       return;
     }
+    if (videoProgress || (isVideoMode && photos.length !== frameCount)) {
+      alert('Video frames are still rendering. Try exporting again once the progress indicator clears.');
+      return;
+    }
     setExporting(true);
     try {
       const saved = await saveFlipbookPdf({
@@ -292,7 +375,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         printLayout,
         autoFrame,
         closeUpTightness,
-        mirrorBackArtworkX: duplexMode === 'flatbed',
+        mirrorBackArtworkX: shouldMirrorBackArtworkX(duplexMode),
         dpi: PRINT_DPI,
         baseName: `flipbook-print-${Date.now()}`,
       });
@@ -335,6 +418,45 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
     setDraftPageHeight(draftPageWidth);
   };
 
+  const handleUseVideoFrames = (source: VideoSource, result: ExtractionResult, cache: FrameCache) => {
+    videoFrameCacheRef.current = cache;
+    skipNextVideoDeriveRef.current = true;
+    setVideoSource(source);
+    setVideoWarnings(result.warnings);
+    setVideoProgress(null);
+    setVideoError(null);
+    setEditingPhotoId(null);
+    clearPhotoDrag();
+    replaceWithVideoFrames(source, result);
+  };
+
+  function replaceWithVideoFrames(source: VideoSource, result: ExtractionResult) {
+    const nextPhotos = result.photos.map((photo, index) => ({
+      ...photo,
+      name: `${source.filename} frame ${index + 1}`,
+    }));
+    revokeOwnedVideoPhotos(nextPhotos);
+    ownedVideoPhotosRef.current = nextPhotos;
+    setPhotos(nextPhotos);
+  }
+
+  function clearVideoSource() {
+    setVideoSource(null);
+    setVideoWarnings([]);
+    setVideoProgress(null);
+    setVideoError(null);
+    videoFrameCacheRef.current = createFrameCache();
+    skipNextVideoDeriveRef.current = false;
+    revokeOwnedVideoPhotos();
+  }
+
+  function revokeOwnedVideoPhotos(nextPhotos: Photo[] = []) {
+    if (ownedVideoPhotosRef.current.length === 0) return;
+    const keep = new Set(nextPhotos.map((photo) => photo.src));
+    revokePhotos(ownedVideoPhotosRef.current.filter((photo) => !keep.has(photo.src)));
+    ownedVideoPhotosRef.current = nextPhotos;
+  }
+
   return (
     <main className="cm-flip-view">
       <aside className="cm-flip-sidebar">
@@ -364,6 +486,27 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
             onChange={handleFiles}
             hidden
           />
+          <div className="cm-row cm-row-tight cm-flip-import-row">
+            <button className="cm-mini cm-mini-primary" type="button" onClick={() => setVideoImportOpen(true)}>
+              Import video
+            </button>
+          </div>
+          {videoSource && (
+            <div className="cm-video-active">
+              <div>
+                <b>{videoSource.filename}</b>
+                <span>
+                  {frameCount} frames · {getTrimDuration(videoSource).toFixed(1)}s · {formatVideoMode(videoSource.mode)}
+                  {videoSource.manualFrame ? ' manual' : ''}
+                </span>
+              </div>
+              {videoProgress && <small>{formatVideoProgress(videoProgress)}</small>}
+              {videoError && <small className="is-error">{videoError}</small>}
+              {videoWarnings.map((warning) => (
+                <small key={`${warning.kind}-${videoWarningText(warning)}`}>{videoWarningText(warning)}</small>
+              ))}
+            </div>
+          )}
           <div className="cm-flip-photo-grid">
             {photos.map((photo, index) => (
               <div
@@ -375,13 +518,15 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
                       : photo.subject?.source === 'smartcrop'
                         ? 'is-smartcrop'
                         : ''
-                } ${draggedPhotoId === photo.id ? 'is-reordering' : ''} ${
+                } ${isVideoMode ? 'is-video-frame' : ''} ${draggedPhotoId === photo.id ? 'is-reordering' : ''} ${
                   dropTargetPhotoId === photo.id ? 'is-drop-target' : ''
                 }`}
                 key={photo.id}
-                draggable
+                draggable={!isVideoMode}
                 title={
-                  photo.manualFrame
+                  isVideoMode
+                    ? 'Generated video frame'
+                    : photo.manualFrame
                     ? 'Manual frame active. Drag to reorder.'
                     : photo.subject
                       ? `Auto framed by ${photo.subject.source}. Drag to reorder.`
@@ -394,35 +539,45 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
               >
                 <img src={photo.src} alt="" draggable={false} />
                 <span>{formatFrame(index)}</span>
-                <button
-                  className="cm-flip-photo-open"
-                  type="button"
-                  aria-label={`Crop photo ${index + 1}`}
-                  onClick={() => setEditingPhotoId(photo.id)}
-                />
-                <button
-                  className="cm-flip-photo-delete"
-                  type="button"
-                  title="Delete photo"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removePhoto(photo.id);
-                  }}
-                >
-                  x
-                </button>
-                {photo.manualFrame && <small>M</small>}
+                {!isVideoMode && (
+                  <>
+                    <button
+                      className="cm-flip-photo-open"
+                      type="button"
+                      aria-label={`Crop photo ${index + 1}`}
+                      onClick={() => setEditingPhotoId(photo.id)}
+                    />
+                    <button
+                      className="cm-flip-photo-delete"
+                      type="button"
+                      title="Delete photo"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removePhoto(photo.id);
+                      }}
+                    >
+                      x
+                    </button>
+                    {photo.manualFrame && <small>M</small>}
+                  </>
+                )}
               </div>
             ))}
           </div>
           {analyzing && <div className="cm-analyzing">Analyzing {analyzing.done}/{analyzing.total}...</div>}
           {photos.length > 0 && (
             <div className="cm-row cm-row-tight">
-              <button className="cm-mini" type="button" onClick={redetectPhotos} disabled={Boolean(analyzing)}>
-                Re-detect
-              </button>
+              {isVideoMode ? (
+                <button className="cm-mini" type="button" onClick={() => setVideoImportOpen(true)}>
+                  Re-sample
+                </button>
+              ) : (
+                <button className="cm-mini" type="button" onClick={redetectPhotos} disabled={Boolean(analyzing)}>
+                  Re-detect
+                </button>
+              )}
               <button className="cm-mini" type="button" onClick={clearPhotos}>
-                Clear photos
+                {isVideoMode ? 'Clear video' : 'Clear photos'}
               </button>
             </div>
           )}
@@ -597,7 +752,10 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
           <div className="cm-flip-stage-head">
             <div>
               <h2>Flipbook blade map</h2>
-              <p>Physical blade: 88.575 x 42.551 mm. Front is A(i), back is D(i+1).</p>
+              <p>
+                Physical blade: {formatBladeMm(BLADE_VIEWBOX.w)} x {formatBladeMm(BLADE_VIEWBOX.h)} mm.
+                Front is A(i), back is D(i+1).
+              </p>
             </div>
             <div className="cm-flip-stats">
               <span>{frameCount} frames</span>
@@ -705,10 +863,18 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         title="Export flipbook"
         description="Create a print-ready duplex PDF using the current media size, bleed, and blade layout."
       />
+      <VideoImportModal
+        open={videoImportOpen}
+        frameCount={frameCount}
+        targetAspect={FLIPBOOK_FRAME_ASPECT}
+        onFrameCountChange={setFrameCount}
+        onClose={() => setVideoImportOpen(false)}
+        onUseFrames={handleUseVideoFrames}
+      />
       <FrameEditorModal
         photo={editingPhoto}
         closeUpTightness={closeUpTightness}
-        aspectRatio={BLADE_VIEWBOX.w / (BLADE_VIEWBOX.h * 2)}
+        aspectRatio={FLIPBOOK_FRAME_ASPECT}
         onClose={() => setEditingPhotoId(null)}
         onSave={saveManualFrame}
         onReset={resetManualFrame}
@@ -766,7 +932,7 @@ function FlipbookExportPreview({
         frames={frames}
         pageSetup={pageSetup}
         pagePrintLayout={pagePrintLayout}
-        mirrorArtworkX={duplexMode === 'flatbed'}
+        mirrorArtworkX={shouldMirrorBackArtworkX(duplexMode)}
         autoFrame={autoFrame}
         closeUpTightness={closeUpTightness}
       />
@@ -965,7 +1131,7 @@ function PrintPagePreview({
                 side="back"
                 frames={frames}
                 bleedMm={pageSetup.bleedMm}
-                mirrorArtworkX={duplexMode === 'flatbed'}
+                mirrorArtworkX={shouldMirrorBackArtworkX(duplexMode)}
                 autoFrame={autoFrame}
                 closeUpTightness={closeUpTightness}
                 showDetections={showDetections}
@@ -1129,30 +1295,30 @@ function BladeArt({
       </g>
       <path transform={BLADE_PATH_TRANSFORM} d={BLADE_PATH_D} fill="none" stroke="currentColor" />
       <text
-        x={BLADE_VIEWBOX.x + 3.9}
-        y={BLADE_VIEWBOX.y + BLADE_VIEWBOX.h - 1.95}
+        x={BLADE_VIEWBOX.x + FLIPBOOK_BLADE_LABEL.leftX}
+        y={BLADE_VIEWBOX.y + FLIPBOOK_BLADE_LABEL.y}
         fill="currentColor"
         stroke="rgba(255,255,255,.75)"
-        strokeWidth={small ? 0.35 : 0.45}
+        strokeWidth={small ? FLIPBOOK_BLADE_LABEL.strokeMm : FLIPBOOK_BLADE_LABEL.previewStrokeMm}
         paintOrder="stroke"
         textAnchor="middle"
         dominantBaseline="middle"
-        fontSize={small ? 2.15 : 2.45}
+        fontSize={small ? FLIPBOOK_BLADE_LABEL.fontSizeMm : FLIPBOOK_BLADE_LABEL.previewFontSizeMm}
         fontWeight={700}
       >
         {label}
       </text>
       {bladeId && (
         <text
-          x={BLADE_VIEWBOX.x + BLADE_VIEWBOX.w - 3.9}
-          y={BLADE_VIEWBOX.y + BLADE_VIEWBOX.h - 1.95}
+          x={BLADE_VIEWBOX.x + FLIPBOOK_BLADE_LABEL.rightX}
+          y={BLADE_VIEWBOX.y + FLIPBOOK_BLADE_LABEL.y}
           fill="currentColor"
           stroke="rgba(255,255,255,.75)"
-          strokeWidth={small ? 0.35 : 0.45}
+          strokeWidth={small ? FLIPBOOK_BLADE_LABEL.strokeMm : FLIPBOOK_BLADE_LABEL.previewStrokeMm}
           paintOrder="stroke"
           textAnchor="middle"
           dominantBaseline="middle"
-          fontSize={small ? 2.15 : 2.45}
+          fontSize={small ? FLIPBOOK_BLADE_LABEL.fontSizeMm : FLIPBOOK_BLADE_LABEL.previewFontSizeMm}
           fontWeight={700}
         >
           {bladeId}
@@ -1176,33 +1342,6 @@ function getArtworkTransform(
   if (printOrientation === 'flip-y') return `translate(0 ${imageCenterY * 2}) scale(1 -1)`;
   if (mirrorArtworkX) return `translate(${imageCenterX * 2} 0) scale(-1 1)`;
   return undefined;
-}
-
-async function loadPhoto(file: File): Promise<FlipbookPhoto | null> {
-  const src = await readFile(file);
-  const image = await loadImage(src);
-  if (!image) return null;
-  const subject = await detectSubject(image);
-  return {
-    id:
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random()}`,
-    src,
-    name: file.name,
-    naturalWidth: image.naturalWidth,
-    naturalHeight: image.naturalHeight,
-    subject,
-  };
-}
-
-function readFile(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
 }
 
 function loadImage(src: string) {
@@ -1300,6 +1439,10 @@ function formatMm(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function formatBladeMm(value: number) {
+  return value.toFixed(3).replace(/\.?0+$/, '');
+}
+
 function formatInputMm(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
@@ -1328,4 +1471,19 @@ function getPrintWorkflowNote(mode: DuplexMode) {
     return 'Back pages rotate the slot map for printers that flip both axes.';
   }
   return 'Back pages mirror columns for long-edge duplex registration.';
+}
+
+function formatVideoMode(mode: VideoSource['mode']) {
+  if (mode === 'perFrame') return 'per-frame';
+  return mode;
+}
+
+function formatVideoProgress(progress: DeriveProgress) {
+  return `${progress.stage} ${progress.done}/${progress.total}`;
+}
+
+function videoWarningText(warning: ExtractionWarning) {
+  if (warning.kind === 'lowFps') return `Low motion rate (${warning.effectiveFps.toFixed(1)} fps).`;
+  if (warning.kind === 'noSubject') return 'No subject detected; using center framing.';
+  return warning.message;
 }

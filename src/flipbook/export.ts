@@ -3,6 +3,7 @@ import { saveExportBytes } from '../export';
 import { computePhotoPlacement } from '../photoFraming';
 import type { Photo } from '../types';
 import {
+  FLIPBOOK_BLADE_LABEL,
   FLIPBOOK_BLADE_LOCAL_COMMANDS,
   FLIPBOOK_BLADE_VIEWBOX,
   getFlipbookBladeBleedLoops,
@@ -305,24 +306,23 @@ function drawBladeRasterLabels(
   partLabel: string,
   bladeId: string
 ) {
-  const viewBox = FLIPBOOK_BLADE_VIEWBOX;
-  const y = (bleed + viewBox.h - 1.95) * pxPerMm;
-  const fontSize = 2.15 * pxPerMm;
+  const y = (bleed + FLIPBOOK_BLADE_LABEL.y) * pxPerMm;
+  const fontSize = FLIPBOOK_BLADE_LABEL.fontSizeMm * pxPerMm;
 
   ctx.save();
   ctx.font = `700 ${fontSize}px Arial, sans-serif`;
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-  ctx.lineWidth = 0.35 * pxPerMm;
+  ctx.lineWidth = FLIPBOOK_BLADE_LABEL.strokeMm * pxPerMm;
   ctx.fillStyle = '#111';
 
   ctx.textAlign = 'center';
-  const leftX = (bleed + 3.9) * pxPerMm;
+  const leftX = (bleed + FLIPBOOK_BLADE_LABEL.leftX) * pxPerMm;
   ctx.strokeText(partLabel, leftX, y);
   ctx.fillText(partLabel, leftX, y);
 
-  const rightX = (bleed + viewBox.w - 3.9) * pxPerMm;
+  const rightX = (bleed + FLIPBOOK_BLADE_LABEL.rightX) * pxPerMm;
   ctx.strokeText(bladeId, rightX, y);
   ctx.fillText(bladeId, rightX, y);
   ctx.restore();

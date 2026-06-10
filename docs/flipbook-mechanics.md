@@ -149,7 +149,7 @@ The page-size input UI may display and accept either millimeters or inches, but 
 Bleed is separate from page size and blade trim. The image fill may extend beyond the blade contour by the configured bleed amount, but the black blade contour remains the trim/cut line.
 
 ```text
-trim/cut geometry = original blade SVG contour
+trim/cut geometry = bladeV2 SVG contour
 image fill        = blade contour plus bleed
 default bleed     = 1 mm
 maximum bleed     = 2 mm
@@ -158,7 +158,7 @@ maximum bleed     = 2 mm
 The blade size is fixed by the physical blade SVG. Changing the paper/media size must never scale a blade to fill the page. Instead, the app computes how many fixed blade footprints fit on the selected media:
 
 ```text
-blade trim size  = 88.575 x 42.551 mm
+blade trim size  = 83.495 x 41.281 mm
 slot footprint   = blade trim + bleed on all sides
 page media       = selected paper size in mm
 layout capacity  = fixed slots that fit inside the page

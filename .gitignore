@@ -51,3 +51,10 @@ src-tauri/gen
 # Release artifacts
 release
 release-artifacts/
+
+# Local research/scratch artifacts
+tmp_*/
+flipbook-test-images/
+simulations/
+Couple_Animation_Machine_*.mp4
+corazon.html

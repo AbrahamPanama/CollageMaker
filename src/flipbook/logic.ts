@@ -107,3 +107,7 @@ export function validateBladeMap(frameCount: number) {
     return top.frontFrame === stable.frame && bottom.backFrame === stable.frame;
   });
 }
+
+export function shouldMirrorBackArtworkX(duplexMode: DuplexMode) {
+  return duplexMode !== 'none';
+}

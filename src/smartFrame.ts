@@ -15,6 +15,12 @@ export type SubjectBox = {
   source: 'face' | 'smartcrop';
 };
 
+type DetectableSource = HTMLImageElement | HTMLCanvasElement;
+type SubjectInput = DetectableSource | ImageBitmap;
+type DetectSubjectOptions = {
+  faceApiMode?: 'always' | 'whenNoFace' | 'never';
+};
+
 // All model assets are bundled into the app under public/ so it runs fully offline.
 const MEDIAPIPE_WASM = `${import.meta.env.BASE_URL}mediapipe-wasm`;
 const FACE_MODEL_URL = `${import.meta.env.BASE_URL}models/blaze_face_short_range.tflite`;
@@ -66,7 +72,7 @@ type DetectedBox = { x: number; y: number; w: number; h: number };
 
 function detectOnSource(
   detector: FaceDetector,
-  source: HTMLImageElement | HTMLCanvasElement,
+  source: DetectableSource,
   offsetX: number,
   offsetY: number,
   out: DetectedBox[]
@@ -89,7 +95,7 @@ function detectOnSource(
 }
 
 function cropToCanvas(
-  img: HTMLImageElement,
+  source: DetectableSource,
   sx: number,
   sy: number,
   sw: number,
@@ -100,19 +106,19 @@ function cropToCanvas(
   c.height = sh;
   const ctx = c.getContext('2d');
   if (!ctx) return null;
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
   return c;
 }
 
 async function detectWithFaceApi(
-  img: HTMLImageElement,
+  img: DetectableSource,
   out: DetectedBox[]
 ): Promise<void> {
   const ok = await loadFaceApi();
   if (!ok || !faceApiModule) return;
   try {
     const detections = await faceApiModule.detectAllFaces(
-      img,
+      img as never,
       new faceApiModule.SsdMobilenetv1Options({ minConfidence: 0.2, maxResults: 200 })
     );
     for (const d of detections) {
@@ -128,9 +134,8 @@ async function detectWithFaceApi(
   }
 }
 
-async function detectFaces(img: HTMLImageElement): Promise<SubjectBox | null> {
-  const W = img.naturalWidth;
-  const H = img.naturalHeight;
+async function detectFaces(img: DetectableSource, options: DetectSubjectOptions): Promise<SubjectBox | null> {
+  const { width: W, height: H } = getSourceSize(img);
   const detections: DetectedBox[] = [];
 
   const detector = await getFaceDetector();
@@ -165,7 +170,10 @@ async function detectFaces(img: HTMLImageElement): Promise<SubjectBox | null> {
     }
   }
 
-  await detectWithFaceApi(img, detections);
+  const faceApiMode = options.faceApiMode ?? 'always';
+  if (faceApiMode === 'always' || (faceApiMode === 'whenNoFace' && detections.length === 0)) {
+    await detectWithFaceApi(img, detections);
+  }
 
   if (detections.length === 0) return null;
 
@@ -198,18 +206,19 @@ async function detectFaces(img: HTMLImageElement): Promise<SubjectBox | null> {
   };
 }
 
-async function detectSmartCrop(img: HTMLImageElement): Promise<SubjectBox | null> {
+async function detectSmartCrop(img: DetectableSource): Promise<SubjectBox | null> {
   try {
     const mod = await import('smartcrop');
     const smartcrop = mod.default ?? mod;
-    const size = Math.min(img.naturalWidth, img.naturalHeight);
-    const result = await smartcrop.crop(img, { width: size, height: size });
+    const { width, height } = getSourceSize(img);
+    const size = Math.min(width, height);
+    const result = await smartcrop.crop(img as HTMLImageElement, { width: size, height: size });
     const c = result.topCrop;
     return {
-      x: c.x / img.naturalWidth,
-      y: c.y / img.naturalHeight,
-      w: c.width / img.naturalWidth,
-      h: c.height / img.naturalHeight,
+      x: c.x / width,
+      y: c.y / height,
+      w: c.width / width,
+      h: c.height / height,
       source: 'smartcrop',
     };
   } catch (e) {
@@ -218,8 +227,26 @@ async function detectSmartCrop(img: HTMLImageElement): Promise<SubjectBox | null
   }
 }
 
-export async function detectSubject(img: HTMLImageElement): Promise<SubjectBox | null> {
-  const faces = await detectFaces(img);
+export async function detectSubject(source: SubjectInput, options: DetectSubjectOptions = {}): Promise<SubjectBox | null> {
+  const img = normalizeDetectionSource(source);
+  const faces = await detectFaces(img, options);
   if (faces) return faces;
   return await detectSmartCrop(img);
+}
+
+function normalizeDetectionSource(source: SubjectInput): DetectableSource {
+  if (source instanceof HTMLImageElement || source instanceof HTMLCanvasElement) return source;
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext('2d');
+  if (ctx) ctx.drawImage(source, 0, 0);
+  return canvas;
+}
+
+function getSourceSize(source: DetectableSource) {
+  if (source instanceof HTMLImageElement) {
+    return { width: source.naturalWidth, height: source.naturalHeight };
+  }
+  return { width: source.width, height: source.height };
 }

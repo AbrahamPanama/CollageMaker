@@ -3,6 +3,7 @@ import {
   buildFlipbookBlades,
   buildPrintPages,
   buildStableFrames,
+  shouldMirrorBackArtworkX,
   validateBladeMap,
 } from './logic';
 
@@ -71,5 +72,13 @@ describe('flipbook mechanics', () => {
     page.frontSlots.forEach((slot, index) => {
       expect(page.backSlots[index].item?.index).toBe(slot.item?.index);
     });
+  });
+
+  it('mirrors back artwork horizontally for all print workflows that output backs', () => {
+    expect(shouldMirrorBackArtworkX('row-mirror')).toBe(true);
+    expect(shouldMirrorBackArtworkX('column-mirror')).toBe(true);
+    expect(shouldMirrorBackArtworkX('rotate-180')).toBe(true);
+    expect(shouldMirrorBackArtworkX('flatbed')).toBe(true);
+    expect(shouldMirrorBackArtworkX('none')).toBe(false);
   });
 });

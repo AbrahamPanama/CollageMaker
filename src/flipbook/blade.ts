@@ -2,16 +2,28 @@ import { computeShapeContour, contourLoopsToSvgPath } from '../contour';
 import type { Point } from '../types';
 
 export const FLIPBOOK_BLADE_VIEWBOX = {
-  x: -1853.287598,
-  y: 12.724396,
-  w: 88.575073,
-  h: 42.551208,
+  x: -385.252502,
+  y: 14.359406,
+  w: 83.495026,
+  h: 41.281189,
 };
 
-export const FLIPBOOK_BLADE_PATH_TRANSFORM = 'matrix(-1,0,0,1,-1491.210815,12.724701)';
+export const FLIPBOOK_BLADE_PATH_TRANSFORM = 'translate(-99.529877,301.913025)';
 
 export const FLIPBOOK_BLADE_PATH_D =
-  'M362.076721,41.550903C362.076721,42.10321,361.629028,42.550903,361.076721,42.550903L274.501678,42.550903C273.949432,42.550903,273.501709,42.10321,273.501709,41.550903L273.501709,39.550903C273.501709,38.998596,273.949432,38.550903,274.501678,38.550903L280.284851,38.550903C280.837128,38.550903,281.284851,38.10321,281.284851,37.550903L281.284851,0.999695C281.284851,0.447388,281.732574,-0.000305,282.284851,-0.000305L353.293579,-0.000305C353.845856,-0.000305,354.293579,0.447388,354.293579,0.999695L354.293579,37.550903C354.293579,38.10321,354.741272,38.550903,355.293549,38.550903L361.076721,38.550903C361.629028,38.550903,362.076721,38.998596,362.076721,39.550903L362.076721,41.550903z';
+  'M-202.2276,-247.27243C-202.2276,-246.720123,-202.675293,-246.27243,-203.227615,-246.27243L-284.722656,-246.27243C-285.274902,-246.27243,-285.722626,-246.720123,-285.722626,-247.27243L-285.722626,-248.002411C-285.722626,-248.554733,-285.274902,-249.002411,-284.722656,-249.002411L-281.479462,-249.002411C-280.927185,-249.002411,-280.479492,-249.450104,-280.479492,-250.002426L-280.479492,-286.553619C-280.479492,-287.105927,-280.031738,-287.553619,-279.479462,-287.553619L-208.470734,-287.553619C-207.918472,-287.553619,-207.470734,-287.105927,-207.470734,-286.553619L-207.470734,-250.002426C-207.470734,-249.450104,-207.023041,-249.002411,-206.470779,-249.002411L-203.227615,-249.002411C-202.675293,-249.002411,-202.2276,-248.554733,-202.2276,-248.002411L-202.2276,-247.27243z';
+
+export const FLIPBOOK_BLADE_LABEL = {
+  leftX: 2.25,
+  rightX: FLIPBOOK_BLADE_VIEWBOX.w - 2.25,
+  y: FLIPBOOK_BLADE_VIEWBOX.h - 1.36,
+  fontSizeMm: 1.4,
+  previewFontSizeMm: 1.65,
+  strokeMm: 0.2,
+  previewStrokeMm: 0.25,
+};
+
+export const FLIPBOOK_FRAME_ASPECT = FLIPBOOK_BLADE_VIEWBOX.w / (FLIPBOOK_BLADE_VIEWBOX.h * 2);
 
 export type FlipbookBladePathCommand =
   | { type: 'M' | 'L'; points: [number, number] }
@@ -57,7 +69,7 @@ export function getFlipbookBladeBleedSvgPath(bleedMm: number): string {
 
 function parseBladePathCommands(): FlipbookBladePathCommand[] {
   const tokens = FLIPBOOK_BLADE_PATH_D.match(/[a-zA-Z]|[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi) ?? [];
-  const matrix = parseSvgMatrix(FLIPBOOK_BLADE_PATH_TRANSFORM);
+  const matrix = parseSvgTransform(FLIPBOOK_BLADE_PATH_TRANSFORM);
   const commands: FlipbookBladePathCommand[] = [];
   let i = 0;
   let command = '';
@@ -165,19 +177,36 @@ function toBladeLocal(
   };
 }
 
-function parseSvgMatrix(transform: string) {
-  const values = transform.match(/matrix\(([^)]+)\)/)?.[1].split(/[\s,]+/).map(Number) ?? [];
-  if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) {
-    throw new Error('Invalid blade path transform');
+function parseSvgTransform(transform: string) {
+  const matrixValues = transform.match(/matrix\(([^)]+)\)/)?.[1].split(/[\s,]+/).map(Number) ?? [];
+  if (matrixValues.length === 6 && matrixValues.every((value) => Number.isFinite(value))) {
+    return {
+      a: matrixValues[0],
+      b: matrixValues[1],
+      c: matrixValues[2],
+      d: matrixValues[3],
+      e: matrixValues[4],
+      f: matrixValues[5],
+    };
   }
-  return {
-    a: values[0],
-    b: values[1],
-    c: values[2],
-    d: values[3],
-    e: values[4],
-    f: values[5],
-  };
+
+  const translateValues =
+    transform.match(/translate\(([^)]+)\)/)?.[1].split(/[\s,]+/).filter(Boolean).map(Number) ?? [];
+  if (
+    (translateValues.length === 1 || translateValues.length === 2) &&
+    translateValues.every((value) => Number.isFinite(value))
+  ) {
+    return {
+      a: 1,
+      b: 0,
+      c: 0,
+      d: 1,
+      e: translateValues[0],
+      f: translateValues[1] ?? 0,
+    };
+  }
+
+  throw new Error('Invalid blade path transform');
 }
 
 function isCommand(token: string) {
