@@ -24,6 +24,13 @@ export type ManualFrame = {
   zoom: number;
 };
 
+export type EchoFill = {
+  mode: 'auto' | 'off';
+  blur: number;
+  dim: number;
+  outline: boolean;
+};
+
 export type Photo = {
   id: string;
   src: string;
@@ -31,4 +38,5 @@ export type Photo = {
   naturalHeight: number;
   subject: SubjectBox | null;
   manualFrame?: ManualFrame;
+  echo?: EchoFill;
 };

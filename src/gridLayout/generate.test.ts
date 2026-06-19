@@ -29,4 +29,39 @@ describe('grid layout generation', () => {
     expect(tall?.cells.map((cell) => cell.photoId)).toEqual(selected.cells.map((cell) => cell.photoId));
     expect(tall?.tree).toEqual(selected.tree);
   });
+
+  it('builds Hero-Center layouts with the hero removed from the base mosaic', () => {
+    const layouts = generateLayouts(
+      metas.slice(0, 5),
+      1,
+      {
+        family: 'heroCenter',
+        topK: 4,
+        hero: { photoId: 'p3', shapeId: 'heart', sizeFraction: 0.42 },
+      },
+      12
+    );
+
+    expect(layouts).toHaveLength(4);
+    expect(layouts.every((layout) => layout.family === 'heroCenter')).toBe(true);
+    expect(layouts.every((layout) => layout.heroOverlay?.photoId === 'p3')).toBe(true);
+    expect(layouts.every((layout) => layout.heroOverlay?.shapeId === 'heart')).toBe(true);
+    expect(layouts.every((layout) => !layout.cells.some((cell) => cell.photoId === 'p3'))).toBe(true);
+    expect(layouts.every((layout) => layout.cells.length + 1 === 5)).toBe(true);
+  });
+
+  it('keeps Mosaic output orthogonal to Hero-Center options', () => {
+    const plain = generateLayouts(metas.slice(0, 5), 1, { topK: 3 }, 5);
+    const withHeroOptions = generateLayouts(
+      metas.slice(0, 5),
+      1,
+      {
+        topK: 3,
+        hero: { photoId: 'p2', shapeId: 'diamond', sizeFraction: 0.5 },
+      },
+      5
+    );
+
+    expect(withHeroOptions).toEqual(plain);
+  });
 });

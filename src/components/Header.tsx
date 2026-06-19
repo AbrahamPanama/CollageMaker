@@ -13,6 +13,7 @@ const MODE_LABELS: Record<Mode, string> = {
   shape: 'Shape',
   grid: 'Grid',
   flipbook: 'Flipbook',
+  lego: 'Lego',
 };
 
 export function Header({ mode, onMode, photoCount, onExport, exportDisabled = false }: Props) {
@@ -23,7 +24,7 @@ export function Header({ mode, onMode, photoCount, onExport, exportDisabled = fa
         <span className="cm-brand-name">Collage Maker</span>
       </div>
       <nav className="cm-tabs" role="tablist">
-        {(['shape', 'grid', 'flipbook'] as const).map((m) => (
+        {(['shape', 'grid', 'flipbook', 'lego'] as const).map((m) => (
           <button
             key={m}
             role="tab"

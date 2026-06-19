@@ -338,7 +338,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const prevContourShow = settings.contourShow;
     // Transparency: format must support it; modal toggle picks it explicitly.
     const formatSupportsAlpha =
-      es.format === 'png' || es.format === 'svg' || es.format === 'pdf';
+      es.format === 'png' || es.format === 'tiff' || es.format === 'svg' || es.format === 'pdf';
     const wantTransparent = es.transparent && formatSupportsAlpha;
     const prevBgTransparent = settings.bgTransparent;
     // Temporarily reset zoom so toDataURL renders at the export resolution
@@ -346,6 +346,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const prevZoom = zoom;
 
     const mime = es.format === 'jpg' ? 'image/jpeg' : 'image/png';
+    const captureMime = es.preventPureWhite ? 'image/png' : mime;
     let dataUrl: string;
 
     try {
@@ -367,9 +368,9 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
       }
 
       dataUrl = stage.toDataURL({
-        mimeType: mime,
+        mimeType: captureMime,
         pixelRatio: es.width / STAGE_DIM,
-        quality: es.format === 'jpg' ? 0.92 : 1,
+        quality: captureMime === 'image/jpeg' ? 0.92 : 1,
       });
     } catch (e) {
       console.error('Export failed', e);
@@ -398,6 +399,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         width: es.width,
         height: es.height,
         baseName: `collage-${Date.now()}`,
+        preventPureWhite: es.preventPureWhite,
         hooks: hasVectorContour
           ? {
               svgExtras: `<path d="${contourLoopsToSvgPath(

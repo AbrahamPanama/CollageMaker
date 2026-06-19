@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { ManualFrame, Photo } from '../types';
+import type { EchoFill, ManualFrame, Photo } from '../types';
 import {
   MAX_MANUAL_ZOOM,
+  MIN_MANUAL_ZOOM,
+  computeEchoPlacement,
   computePhotoPlacement,
   constrainManualFrame,
+  getFitSubjectsFrame,
   getInitialManualFrame,
+  isDefaultEchoFill,
+  normalizeEchoFill,
+  placementUnderfills,
 } from '../photoFraming';
 
 type Props = {
@@ -15,6 +21,7 @@ type Props = {
   onClose: () => void;
   onSave: (photoId: string, frame: ManualFrame) => void;
   onReset: (photoId: string) => void;
+  onEchoChange?: (photoId: string, echo: EchoFill | undefined) => void;
 };
 
 type DragState = {
@@ -33,6 +40,7 @@ export function FrameEditorModal({
   onClose,
   onSave,
   onReset,
+  onEchoChange,
 }: Props) {
   const cropRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -41,10 +49,12 @@ export function FrameEditorModal({
   const [frame, setFrame] = useState<ManualFrame>(() =>
     photo ? getInitialManualFrame(photo, closeUpTightness) : { cx: 0.5, cy: 0.5, zoom: 1 }
   );
+  const [echo, setEcho] = useState<EchoFill>(() => normalizeEchoFill(photo?.echo));
 
   useEffect(() => {
     if (!photo) return;
     setFrame(getInitialManualFrame(photo, closeUpTightness));
+    setEcho(normalizeEchoFill(photo.echo));
   }, [photo, closeUpTightness]);
 
   useEffect(() => {
@@ -74,6 +84,8 @@ export function FrameEditorModal({
 
   if (!photo || !placement) return null;
   const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
+  const echoActive = echo.mode === 'auto' && placementUnderfills(placement, box.w, box.h);
+  const echoPlacement = echoActive ? computeEchoPlacement(photo, box.w, box.h, placement) : null;
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -155,7 +167,28 @@ export function FrameEditorModal({
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
           >
+            {echoPlacement && (
+              <>
+                <img
+                  className="cm-frame-echo"
+                  src={photo.src}
+                  alt=""
+                  draggable={false}
+                  style={{
+                    left: echoPlacement.x,
+                    top: echoPlacement.y,
+                    width: echoPlacement.w,
+                    height: echoPlacement.h,
+                    filter: echo.blur > 0 ? `blur(${echo.blur}px)` : undefined,
+                  }}
+                />
+                {echo.dim > 0 && (
+                  <span className="cm-frame-echo-dim" style={{ opacity: echo.dim / 100 }} />
+                )}
+              </>
+            )}
             <img
+              className={`cm-frame-foreground ${echo.outline && echoPlacement ? 'has-outline' : ''}`}
               src={photo.src}
               alt=""
               draggable={false}
@@ -180,6 +213,23 @@ export function FrameEditorModal({
             <span className="cm-frame-reticle" />
           </div>
 
+          <div className="cm-frame-tools">
+            <button
+              className="cm-mini"
+              type="button"
+              onClick={() => setFrame(getFitSubjectsFrame(photo, box.w, box.h))}
+            >
+              Fit subjects
+            </button>
+            <button
+              className="cm-mini"
+              type="button"
+              onClick={() => setEcho({ mode: 'auto', blur: 16, dim: 25, outline: true })}
+            >
+              Soft echo
+            </button>
+          </div>
+
           <label className="cm-slider cm-frame-zoom">
             <span className="cm-slider-row">
               <span className="cm-slider-label">Zoom</span>
@@ -187,13 +237,66 @@ export function FrameEditorModal({
             </span>
             <input
               type="range"
-              min={1}
+              min={MIN_MANUAL_ZOOM}
               max={MAX_MANUAL_ZOOM}
               step={0.05}
               value={frame.zoom}
               onChange={(e) => handleZoom(+e.target.value)}
             />
           </label>
+
+          <div className="cm-frame-echo-panel">
+            <label className="cm-toggle">
+              <span>Echo fill</span>
+              <input
+                type="checkbox"
+                checked={echo.mode === 'auto'}
+                onChange={(event) =>
+                  setEcho((prev) => ({ ...prev, mode: event.target.checked ? 'auto' : 'off' }))
+                }
+              />
+            </label>
+            <label className={`cm-slider ${echo.mode === 'off' ? 'is-disabled' : ''}`}>
+              <span className="cm-slider-row">
+                <span className="cm-slider-label">Blur</span>
+                <span className="cm-slider-val">{Math.round(echo.blur)}px</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={40}
+                step={1}
+                value={echo.blur}
+                disabled={echo.mode === 'off'}
+                onChange={(event) => setEcho((prev) => ({ ...prev, blur: +event.target.value }))}
+              />
+            </label>
+            <label className={`cm-slider ${echo.mode === 'off' ? 'is-disabled' : ''}`}>
+              <span className="cm-slider-row">
+                <span className="cm-slider-label">Dim</span>
+                <span className="cm-slider-val">{Math.round(echo.dim)}%</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={60}
+                step={1}
+                value={echo.dim}
+                disabled={echo.mode === 'off'}
+                onChange={(event) => setEcho((prev) => ({ ...prev, dim: +event.target.value }))}
+              />
+            </label>
+            <label className="cm-toggle">
+              <span>Foreground outline</span>
+              <input
+                type="checkbox"
+                checked={echo.outline}
+                disabled={echo.mode === 'off'}
+                onChange={(event) => setEcho((prev) => ({ ...prev, outline: event.target.checked }))}
+              />
+            </label>
+            <p className="cm-frame-hint">Below 100%, the photo's enlarged copy fills the background.</p>
+          </div>
         </div>
 
         <div className="cm-modal-foot">
@@ -212,6 +315,7 @@ export function FrameEditorModal({
               className="cm-btn cm-btn-primary"
               onClick={() => {
                 onSave(photo.id, constrainManualFrame(frame, photo, box.w, box.h));
+                onEchoChange?.(photo.id, isDefaultEchoFill(echo) ? undefined : normalizeEchoFill(echo));
                 onClose();
               }}
             >

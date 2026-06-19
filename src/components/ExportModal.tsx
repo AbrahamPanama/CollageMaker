@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { pickLegibleText } from '../export';
+import { loadExportPreferences, saveExportPreferences } from '../settingsStore';
 
-export type ExportFormat = 'png' | 'jpg' | 'pdf' | 'svg';
+export type ExportFormat = 'png' | 'jpg' | 'tiff' | 'pdf' | 'svg';
 export type ExportSettings = {
   format: ExportFormat;
   width: number;
   height: number;
   transparent: boolean;
+  preventPureWhite: boolean;
 };
 
 type FixedExportSize = {
@@ -35,8 +37,9 @@ const RES_PRESETS: ResPreset[] = [
 const FORMATS: Array<{ id: ExportFormat; label: string; desc: string }> = [
   { id: 'png', label: 'PNG', desc: 'Lossless · supports transparency' },
   { id: 'jpg', label: 'JPG', desc: 'Smaller · solid background only'  },
-  { id: 'pdf', label: 'PDF', desc: 'Printable document'               },
-  { id: 'svg', label: 'SVG', desc: 'Raster image in an SVG wrapper'    },
+  { id: 'tiff', label: 'TIFF', desc: 'Print raster · supports transparency' },
+  { id: 'pdf', label: 'PDF', desc: 'Printable · vector guides when available' },
+  { id: 'svg', label: 'SVG', desc: 'Raster collage + vector guides'           },
 ];
 
 const MAX_EXPORT_DIM = 7200;
@@ -56,6 +59,7 @@ type Props = {
   bgColor: string;
   aspectRatio?: number;
   allowTransparency?: boolean;
+  initialTransparent?: boolean;
   fixedSize?: FixedExportSize;
   preferredFormat?: ExportFormat;
   formats?: ExportFormat[];
@@ -73,6 +77,7 @@ export function ExportModal({
   bgColor,
   aspectRatio = 1,
   allowTransparency = true,
+  initialTransparent = false,
   fixedSize,
   preferredFormat,
   formats,
@@ -84,6 +89,7 @@ export function ExportModal({
   const [customW, setCustomW] = useState(2400);
   const [customH, setCustomH] = useState(2400);
   const [transparent, setTransparent] = useState(false);
+  const [exportPreferences, setExportPreferences] = useState(loadExportPreferences);
 
   const formatOptions = useMemo(() => {
     const allowed = formats && formats.length > 0 ? formats : FORMATS.map((item) => item.id);
@@ -98,8 +104,10 @@ export function ExportModal({
   const w = fixedSize ? fixedSize.width : presetId === 'custom' ? customW : presetDims.w;
   const h = fixedSize ? fixedSize.height : presetId === 'custom' ? customH : presetDims.h;
   const transparentAvailable =
-    allowTransparency && (activeFormat === 'png' || activeFormat === 'svg' || activeFormat === 'pdf');
+    allowTransparency &&
+    (activeFormat === 'png' || activeFormat === 'tiff' || activeFormat === 'svg' || activeFormat === 'pdf');
   const finalTransparent = transparent && transparentAvailable;
+  const preventPureWhite = exportPreferences.preventPureWhite;
   // With both sides clamped to MAX_EXPORT_DIM, the product is bounded too,
   // so a separate pixel-area check would be redundant.
   const canExport = fixedSize ? w > 0 && h > 0 : w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM;
@@ -115,6 +123,14 @@ export function ExportModal({
   }, [safeAspect]);
 
   useEffect(() => {
+    if (open) setTransparent(initialTransparent);
+  }, [initialTransparent, open]);
+
+  useEffect(() => {
+    saveExportPreferences(exportPreferences);
+  }, [exportPreferences]);
+
+  useEffect(() => {
     if (!open) return;
     if (preferredFormat && formatOptions.some((item) => item.id === preferredFormat)) {
       setFormat(preferredFormat);
@@ -128,6 +144,7 @@ export function ExportModal({
   const estMb = useMemo(() => {
     if (activeFormat === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
     if (activeFormat === 'png') return (w * h * 0.0000016 * 1.2).toFixed(1);
+    if (activeFormat === 'tiff') return (w * h * 4 * 0.000001).toFixed(1);
     if (activeFormat === 'pdf') return (w * h * 0.0000018 * 1.3).toFixed(1);
     return (w * h * 0.0000004).toFixed(2);
   }, [activeFormat, w, h]);
@@ -257,6 +274,14 @@ export function ExportModal({
               disabled={!transparentAvailable}
               onChange={setTransparent}
             />
+            <ExportToggle
+              label="Prevent pure white"
+              hint="Exports #FFFFFF as #FEFEFE for UV RIPs"
+              checked={preventPureWhite}
+              onChange={(value) =>
+                setExportPreferences((prev) => ({ ...prev, preventPureWhite: value }))
+              }
+            />
 
             <h4>Preview</h4>
             <div className="cm-preview-card">
@@ -310,6 +335,7 @@ export function ExportModal({
                   width: w,
                   height: h,
                   transparent: finalTransparent,
+                  preventPureWhite,
                 });
               }}
             >

@@ -1226,9 +1226,28 @@ input[type="number"], input[type="text"] {
   user-select: none;
   pointer-events: none;
 }
+.cm-frame-echo {
+  z-index: 1;
+  transform: scale(1.02);
+}
+.cm-frame-echo-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: #000;
+}
+.cm-frame-foreground {
+  z-index: 3;
+}
+.cm-frame-foreground.has-outline {
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,.55));
+  outline: 1px solid rgba(255,255,255,.72);
+}
 .cm-frame-reticle {
   position: absolute;
   inset: 0;
+  z-index: 5;
   pointer-events: none;
   box-shadow:
     inset 0 0 0 1px rgba(255,255,255,.6),
@@ -1254,6 +1273,7 @@ input[type="number"], input[type="text"] {
 }
 .cm-frame-subject {
   position: absolute;
+  z-index: 4;
   border: 1px solid #f59e0b;
   box-shadow: 0 0 0 1px rgba(0,0,0,.45);
   pointer-events: none;
@@ -1263,6 +1283,37 @@ input[type="number"], input[type="text"] {
   max-width: 520px;
   width: 100%;
   align-self: center;
+}
+.cm-frame-tools,
+.cm-frame-echo-panel {
+  max-width: 520px;
+  width: 100%;
+  align-self: center;
+}
+.cm-frame-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cm-frame-echo-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-sunk);
+  border-radius: var(--radius-s);
+}
+.cm-frame-echo-panel .cm-toggle {
+  min-height: 24px;
+}
+.cm-frame-echo-panel .cm-toggle input {
+  accent-color: var(--accent);
+}
+.cm-frame-hint {
+  grid-column: 1 / -1;
+  color: var(--ink-mute);
+  font-size: 11px;
 }
 
 /* ---------------- Grid view v2 ---------------- */
@@ -1288,12 +1339,59 @@ input[type="number"], input[type="text"] {
   letter-spacing: 0.08em;
 }
 .cm-grid-toolbar input[type="range"] { width: 92px; accent-color: var(--accent); }
+.cm-grid-toolbar input[type="range"]:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
 .cm-grid-toolbar input[type="color"] {
   width: 34px; height: 28px; padding: 2px;
   border: 1px solid var(--line);
   background: #0a0a0b;
   border-radius: 4px;
   cursor: pointer;
+}
+.cm-grid-family,
+.cm-grid-shapes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #0a0a0b;
+}
+.cm-grid-family button,
+.cm-grid-shapes button {
+  height: 28px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.cm-grid-family button {
+  padding: 0 10px;
+  font-size: 12px;
+}
+.cm-grid-shapes button {
+  width: 30px;
+  display: grid;
+  place-items: center;
+}
+.cm-grid-shapes svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.cm-grid-family button:hover,
+.cm-grid-shapes button:hover {
+  color: var(--ink);
+  background: rgba(255,255,255,.06);
+}
+.cm-grid-family button.is-active,
+.cm-grid-shapes button.is-active {
+  color: var(--accent);
+  background: var(--accent-deep);
 }
 .cm-grid-select,
 .cm-grid-color,
@@ -1312,6 +1410,10 @@ input[type="number"], input[type="text"] {
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 0 8px;
+}
+.cm-grid-select select:disabled {
+  opacity: .56;
+  cursor: not-allowed;
 }
 .cm-grid-custom-aspect input { width: 62px; }
 .cm-grid-slider em {
@@ -1521,6 +1623,328 @@ input[type="number"], input[type="text"] {
   color: var(--accent);
   background: var(--accent-deep);
 }
+
+.cm-lego-view {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  background: #101012;
+  color: var(--ink);
+}
+.cm-lego-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+.cm-lego-panel:last-child {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+.cm-lego-panel h3 {
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.cm-lego-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.cm-lego-presets button {
+  min-height: 96px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #151517;
+  color: var(--ink-soft);
+  display: grid;
+  gap: 8px;
+  place-items: center;
+  cursor: pointer;
+}
+.cm-lego-presets button:hover,
+.cm-lego-presets button.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-deep);
+}
+.cm-lego-presets svg {
+  width: 64px;
+  height: 54px;
+  fill: currentColor;
+}
+.cm-lego-presets span {
+  font-weight: 700;
+  font-size: 12px;
+}
+.cm-lego-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.cm-lego-stats div {
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #111113;
+}
+.cm-lego-stats span,
+.cm-lego-photo-slot span,
+.cm-lego-tool-hint,
+.cm-lego-note,
+.cm-lego-preview-placeholder span {
+  color: var(--ink-muted);
+}
+.cm-lego-stats span {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+}
+.cm-lego-stats strong {
+  font-size: 18px;
+}
+.cm-lego-note,
+.cm-lego-tool-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0 0 16px;
+}
+.cm-lego-tools {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.cm-lego-tools button,
+.cm-lego-photo-slot button {
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #111113;
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+.cm-lego-tools button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.cm-lego-tools button:not(:disabled):hover,
+.cm-lego-photo-slot button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cm-lego-stage-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cm-lego-stage-head {
+  min-height: 76px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.cm-lego-stage-head h2 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+.cm-lego-stage-head p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+.cm-lego-stage-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cm-lego-segmented {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0b0b0c;
+}
+.cm-lego-segmented button {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-weight: 800;
+  cursor: pointer;
+}
+.cm-lego-segmented button.is-active {
+  color: var(--accent);
+  background: var(--accent-deep);
+}
+.cm-lego-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow: auto;
+  background: #0d0d0e;
+  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,.05) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+.cm-lego-canvas-frame {
+  position: relative;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  background: var(--surface);
+  isolation: isolate;
+}
+.cm-lego-canvas-frame > div:not(.cm-checker) {
+  position: relative;
+  z-index: 1;
+}
+.cm-lego-3d-frame {
+  position: relative;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  background: linear-gradient(180deg, #18181b, #0b0b0c);
+}
+.cm-lego-3d-shell,
+.cm-lego-3d-shell canvas,
+.cm-lego-3d-loading,
+.cm-lego-3d-fallback {
+  width: 100%;
+  height: 100%;
+}
+.cm-lego-3d-loading,
+.cm-lego-3d-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--ink-muted);
+  font-weight: 800;
+}
+.cm-lego-3d-fallback {
+  gap: 8px;
+  padding: 18px;
+  text-align: center;
+}
+.cm-lego-3d-fallback img {
+  max-width: min(84%, 320px);
+  max-height: 72%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: var(--shadow-card);
+}
+.cm-lego-3d-fallback small {
+  color: var(--ink-faint);
+}
+.cm-lego-capture-stage {
+  position: absolute;
+  left: -100000px;
+  top: 0;
+  pointer-events: none;
+  opacity: 0;
+  overflow: hidden;
+}
+.cm-lego-photo-slot {
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 68px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #111113;
+  cursor: pointer;
+}
+.cm-lego-photo-slot:hover,
+.cm-lego-photo-slot.is-active,
+.cm-lego-photo-slot.is-dragging {
+  border-color: var(--accent);
+}
+.cm-lego-photo-slot img,
+.cm-lego-photo-empty {
+  width: 64px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #0a0a0b;
+}
+.cm-lego-photo-empty {
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 24px;
+  color: var(--accent);
+}
+.cm-lego-photo-slot strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.cm-lego-photo-slot span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.cm-lego-toggle,
+.cm-lego-color,
+.cm-lego-range {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cm-lego-toggle input {
+  accent-color: var(--accent);
+}
+.cm-lego-range input {
+  flex: 1;
+}
+.cm-lego-range em {
+  min-width: 42px;
+  font-style: normal;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+.cm-lego-preview-placeholder {
+  min-height: 96px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  background: #111113;
+}
+.cm-lego-preview-placeholder strong {
+  color: var(--ink);
+}
+
 .cm-grid-stage {
   flex: 1;
   min-height: 0;
@@ -1588,6 +2012,14 @@ input[type="number"], input[type="text"] {
 .cm-grid-selection-bar button:hover {
   color: var(--ink);
   border-color: var(--line-strong);
+}
+.cm-grid-selection-bar button:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+.cm-grid-selection-bar button:disabled:hover {
+  color: var(--ink-soft);
+  border-color: var(--line);
 }
 
 /* Analyzing pill in sidebar (re-used) */

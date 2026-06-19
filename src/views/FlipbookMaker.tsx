@@ -376,6 +376,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         autoFrame,
         closeUpTightness,
         mirrorBackArtworkX: shouldMirrorBackArtworkX(duplexMode),
+        preventPureWhite: settings.preventPureWhite,
         dpi: PRINT_DPI,
         baseName: `flipbook-print-${Date.now()}`,
       });

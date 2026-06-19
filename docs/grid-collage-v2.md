@@ -12,7 +12,7 @@ Replace the current fixed‑template grid (`LAYOUTS[6]`, slot‑click‑to‑upl
 
 Three pillars:
 
-1. **Layout engine (the centerpiece).** A pure, deterministic, seedable generator built on **aspect‑aware binary partition trees**. Photos in → scored layout candidates out. No fixed templates anywhere.
+1. **Layout engine (the centerpiece).** A pure, deterministic, seedable generator built on **aspect‑aware binary partition trees**. Photos in → scored layout candidates out. No fixed templates anywhere. Two **layout families** share the engine: **Mosaic** (pure partition) and **Hero‑Center** (partition + a centered shaped overlay cell — circle, heart, triangle, diamond, hexagon — that always holds the hero photo; §3.8).
 2. **Unified photo model.** Grid migrates from its private `PhotoState {src,x,y,scale}` to the app‑wide `Photo {id,src,naturalWidth,naturalHeight,subject,manualFrame}` so `detectSubject()`, `computePhotoPlacement()`, and `FrameEditorModal` work in grid identically to Shape and Flipbook modes.
 3. **Production UX.** Batch ingestion with a photo tray, generated‑variant strip ("templates" become live candidates), shuffle, cell swap via drag, hero pinning, gutter/corner/background controls, expanded + custom aspect ratios, persistence, polished export.
 
@@ -49,6 +49,7 @@ Existing machinery to **reuse, not rebuild**: `detectSubject()` (`smartFrame.ts`
 5. **Variant choice:** show the top‑K scored layout candidates as a strip; **Shuffle** generates a new batch from a new seed. Deterministic: same photos + seed ⇒ same layouts.
 6. **Production UX:** batch upload, drag‑drop, photo tray with reorder/remove, cell‑to‑cell photo swap, hero pin, gutter/corner‑radius/background controls, expanded + custom aspect list, persistence, a11y, graceful edge cases.
 7. **Performance:** layout generation < 50 ms for ≤ 30 photos; 60 fps canvas interaction; detection lazy and cached per photo.
+8. **Hero‑Center family:** a second layout family where the hero photo sits in a **centered shaped cell** (circle, heart, triangle, diamond, hexagon) and the base grid adapts around it — across all canvas aspects, with subject‑aware occlusion handling for the photos underneath (§3.8).
 
 ### 2.2 Non‑goals (v1)
 - Freeform/overlapping collage (non‑grid), rotation of cells, polaroid/scrapbook styles.
@@ -142,10 +143,51 @@ src/gridLayout/
   generate.ts     // generateLayouts(metas, targetAspect, options, seed) → ScoredLayout[]
   scoring.ts      // score(layout, metas, options) → {total, breakdown}
   stability.ts    // matchAssignments(prevCells, nextLayouts, locks) → assigned ScoredLayout[]
+  heroShapes.ts   // HERO_SHAPES registry: unit paths, safe insets, occlusion masks (§3.8)
   rng.ts          // mulberry32(seed); the ONLY randomness source in the engine
 ```
 
-All rects normalized `[0,1]²`; pixel conversion happens only at render/export. `GenOptions = { topK, gutterFraction, minCellFraction, weights?, locks? }`.
+All rects normalized `[0,1]²`; pixel conversion happens only at render/export.
+`GenOptions = { family: 'mosaic' | 'heroCenter', topK, gutterFraction, minCellFraction, weights?, locks?, hero?: { photoId, shapeId, sizeFraction } }`.
+
+### 3.8 Layout families — Hero‑Center (shaped overlay)
+
+The reference design (2×2 grid with a circle dead‑center holding the hero) cannot come out of a binary partition — a centered circle is not a tiling cell. So Hero‑Center is modeled as **base partition + overlay**:
+
+```
+heroCenter layout = partition(non‑hero photos, N−1 leaves)   ← same tree engine
+                  + overlay { heroPhotoId, shapeId, bbox }    ← drawn on top, clipped to shape
+```
+
+**Overlay geometry.** The shape lives in a **square bbox** of side `s = sizeFraction × min(canvasW, canvasH)`, centered at the canvas center — for *every* aspect ratio. `sizeFraction` is user‑adjustable (0.25–0.60, default 0.42). A **ring stroke** (default width = gutter, color = background) is drawn on the shape boundary so the hero separates cleanly from the base grid, matching the reference's line language.
+
+**Shape registry (`heroShapes.ts`).** Each entry: `{ id, name, unitPath, safeInset, subjectBias }` with the path normalized to the unit square. v1 set:
+
+| Shape | Path source | `safeInset` | `subjectBias` (cy shift) |
+|---|---|---|---|
+| `circle` | parametric | 0.85 | 0 |
+| `heart` | **reuse the existing heart asset** (`src/shapes/heart.svg` via `shapes/library.ts`) | 0.72 | −0.06 (bias up — hearts narrow at the bottom) |
+| `triangle` | parametric (apex up) | 0.60 | +0.08 (bias down — wide base) |
+| `diamond` | parametric (square rotated 45°; reads better over a square grid than an axis‑aligned square) | 0.70 | 0 |
+| `hexagon` | parametric | 0.85 | 0 |
+
+`safeInset` shrinks the auto‑framing target so the subject sits inside the shape's comfortable interior (a circle's inscribed square is ~0.707 of its bbox; values above are tuned starting points, finalized against the design goldens). Registry is data‑driven — adding a shape is one entry + one golden, no engine change. User‑uploaded SVG shapes (the `userShapes.ts` system) are an explicit **v2 follow‑up**, not v1.
+
+**Hero selection.** `heroPhotoId` if pinned; otherwise **auto = largest face area** (in this family auto‑pinning *is* on — this resolves open question 3 *for Hero‑Center only*; Mosaic keeps face‑weighting without auto‑pin). Dragging any photo onto the center shape makes it the hero; the displaced hero rejoins the base pool (relayout of N−1 with stability matching).
+
+**Hero framing.** `computePhotoPlacement(hero, bboxSide, bboxSide, { closeUp: true, closeUpTightness: tightness × shape.safeInset })`, subject center shifted by `subjectBias`, then the rendered image is clipped to the shape path (Konva `clipFunc` + `Path2D` scaled to the bbox). Manual framing: same `FrameEditorModal` with `aspectRatio = 1`; v1 shows the plain square editor (the canvas preview is live truth) — a shape‑silhouette overlay in the editor is a nice‑to‑have noted for v1.1.
+
+**Base‑partition constraints (what makes it look designed, not pasted):**
+- **Center‑junction bias.** Score bonus when an internal junction of the partition falls within 0.08 of canvas center (the reference's 4‑corner cross). Generator assist: a dedicated **symmetric generator** builds one quadrant tree and mirrors it 4‑fold (or one half, 2‑fold) — guaranteeing a center cross junction; each quadrant is generated at the canvas aspect (quadrants of a rect share its aspect), so this works at every target aspect. Symmetric candidates are seeded into the same scored pool as stochastic ones; the scorer decides.
+- **Occlusion‑aware subject safety.** The `subjectSafety` penalty (§3.3) evaluates each base photo's subject against its cell's **visible region = cell − shape mask**. Subjects that would hide under the hero shape are penalized, so the engine naturally routes face photos away from center or layouts that distribute the occlusion across cell corners (as in the reference). Implementation: analytic for `circle`; 16×16 point‑in‑path mask sampling for the rest, precomputed once per shape in `heroShapes.ts`. To keep the 50 ms budget, occlusion scoring runs **two‑stage**: cheap scores prune to the top ~40 candidates, occlusion refines those.
+- **Burial guard.** Any base cell whose area is > 55 % covered by the shape ⇒ heavy penalty (its photo would be mostly hidden).
+
+**Family switching & adaptation.**
+- `family` is part of `GenOptions`; Mosaic results are byte‑identical whether or not the hero code exists (orthogonality is a test).
+- Aspect change: overlay bbox recenters/resizes from the min dimension; base re‑solves per §3.5. Shape change (circle → heart): **only the clip path and ring redraw** — base layout, assignments, and hero framing are untouched (instant, no regeneration).
+- Variant strip in this family varies the **base partition only**; the shape is a user control, drawn into every wireframe so variants preview honestly.
+
+**Degenerates.** N=1: hero shape over the background color (a shaped portrait card — valid output). N=2: base = single full‑bleed photo behind the shape. Panorama as hero: cover‑crop inside the square bbox, subject‑aware as usual. Shape at max size on extreme aspects (9:16 at 0.60): bbox still keys off min dimension, so it never overflows; burial guard protects thin side cells.
 
 ---
 
@@ -162,6 +204,10 @@ GridState = {
   seed: number
   lockedPhotoIds: Set<string>
   heroPhotoId: string | null
+  family: 'mosaic' | 'heroCenter'
+  heroShape: HeroShapeId         // 'circle' | 'heart' | 'triangle' | 'diamond' | 'hexagon'
+  heroSizeFraction: number       // 0.25..0.60, default 0.42
+  ringWidth: number | null       // null = follow gutter (default)
   aspect: AspectChoice           // preset id or {custom: {w,h}}
   gutter: number                 // 0..40 px at base stage scale (persisted as fraction)
   cornerRadius: number           // 0..32 px
@@ -219,9 +265,14 @@ Replace the 3 presets with: **1:1, 4:5, 3:4, 2:3, 9:16, 16:9, 3:2, 4:3, A4 (1:�
 - **Auto close‑up:** toggle + tightness slider (0.4–0.95), global, same copy as Shape mode.
 - **Shuffle:** new seed → new candidate batch → variant strip refreshes; selected layout replaced by new rank‑1 *only if* the user hadn't explicitly picked a variant this session (otherwise keep selection, flash the strip).
 
-### 6.3 Variant strip (replaces LayoutPicker)
+### 6.3 Variant strip (replaces LayoutPicker) & family toggle
 
-Top‑K candidates rendered as mini wireframe SVGs (reuse the current picker's rect‑preview pattern, but generated from `ScoredLayout.cells`). Selected variant highlighted; click switches instantly (assignments via §3.4 stability matching; photos never reload). Keyboard navigable (roving tabindex, arrow keys).
+A **segmented family control sits above the strip: "Mosaic | Hero center."** Top‑K candidates rendered as mini wireframe SVGs (reuse the current picker's rect‑preview pattern, but generated from `ScoredLayout.cells`; in Hero‑Center the selected shape is drawn into every wireframe). Selected variant highlighted; click switches instantly (assignments via §3.4 stability matching; photos never reload). Keyboard navigable (roving tabindex, arrow keys).
+
+When Hero‑Center is active, a second control row appears:
+- **Shape picker:** circle · heart · triangle · diamond · hexagon (icon buttons from the `heroShapes.ts` registry; radio‑group semantics). Switching shapes is instant — clip path + ring only, no relayout (§3.8).
+- **Hero size:** slider 25–60 % (of the canvas's min dimension).
+- **Ring:** width slider, default "follow gutter" (toggle off to set independently).
 
 ### 6.4 Cell interactions
 
@@ -230,6 +281,7 @@ Top‑K candidates rendered as mini wireframe SVGs (reuse the current picker's r
 - **Drag photo onto another cell → swap** the two photos (assignments swap; manual frames travel with their photos). Visual drop highlight, same pattern as Flipbook's tray reorder.
 - Right‑side mini‑actions on selection: Edit frame · Hero pin · Lock cell · Remove photo.
 - Removing a photo triggers regeneration at N−1 (stability matching keeps the rest still).
+- **Hero‑Center extras:** the shaped center cell is selectable/editable like any cell; dragging any photo onto it **promotes it to hero** (displaced hero rejoins the base, N−1 relayout); the hero cell ignores `cornerRadius` (the shape *is* its outline) and cannot be locked or removed — only swapped.
 
 ---
 
@@ -237,7 +289,7 @@ Top‑K candidates rendered as mini wireframe SVGs (reuse the current picker's r
 
 | File | Action | Contents |
 |---|---|---|
-| `src/gridLayout/*` | **new** | pure engine (§3.7) |
+| `src/gridLayout/*` | **new** | pure engine (§3.7), incl. `heroShapes.ts` registry (§3.8) |
 | `src/photoIngest.ts` | **new (extracted)** | shared `loadPhoto` (§4.2); Flipbook refactored to import it |
 | `src/views/GridCollage.tsx` | **rewrite** | state (§4.1), engine orchestration, toolbar, tray, variant strip, export wiring |
 | `src/components/GridStage.tsx` | **new** (replaces `CollageStage`) | Konva stage; renders `GridCell[]` + photos via `computePhotoPlacement`; selection, gestures, swap DnD |
@@ -264,6 +316,8 @@ Export path unchanged: stage `toDataURL` with `pixelRatio = exportWidth/stageW` 
 6. **Shuffle:** strip refreshes with 8 new candidates; selection behavior per §6.2.
 7. **Export:** modal preview matches canvas exactly; PNG/JPG at chosen resolution; saved via native dialog on desktop.
 8. **Reload (desktop/web):** settings, aspect, seed, gutter/radius/background, closeUp restored; photos must be re‑added (v1 persistence scope), with an empty‑state hint "Your style settings were restored."
+9. **Hero‑Center entry:** with 5 photos loaded, switch family to Hero center → largest‑face photo snaps into a centered circle, the other 4 form a symmetric base around it (center cross junction), ring matches the gutter. Switching shape circle → heart is instant; aspect 1:1 → 9:16 keeps the heart dead‑center while the base re‑solves.
+10. **Hero swap:** drag a tray photo onto the heart → it becomes the hero with subject framed inside the shape's safe inset; the old hero drops into the base grid near the center (stability matching).
 
 ---
 
@@ -271,7 +325,7 @@ Export path unchanged: stage `toDataURL` with `pixelRatio = exportWidth/stageW` 
 
 Follow `settingsStore.ts` patterns (versioned localStorage snapshot, `mergeSettings` for forward compatibility):
 
-- **Persist:** aspect choice, gutter, corner radius, background, closeUp + tightness, last seed, top‑K size. Key: `cm.grid.v2`.
+- **Persist:** aspect choice, gutter, corner radius, background, closeUp + tightness, last seed, top‑K size, **family, hero shape, hero size, ring width**. Key: `cm.grid.v2`.
 - **Do not persist:** image bytes, photos, manual frames (they reference photo ids that don't survive reload). Rationale: localStorage quotas make dataURL persistence a footgun; IndexedDB image persistence is an explicit v2 follow‑up (note it in code TODO + this doc).
 - Profiles: grid settings join the existing profile snapshot shape if trivially compatible; otherwise defer (open question §13).
 
@@ -303,16 +357,25 @@ If `generateLayouts` ever exceeds budget on low‑end hardware, it is **pure** �
 - **Scoring:** subjectSafety = 0 when subject fits; minCell violations dominate; hero lands in largest cell for crafted metas.
 - **Stability matching:** add/remove one photo ⇒ ≥ 70% of remaining photos keep IoU ≥ 0.3 with previous cells (regression threshold).
 - **Clamps & degenerates:** N=0/1/2, panorama clamp, 30‑cap.
+- **Hero‑Center (§3.8):**
+  - Shape masks: sampled area of each unit path within tolerance of analytic truth (circle π/4 ≈ 0.785; diamond 0.5; hexagon ≈ 0.65; heart/triangle against precomputed references).
+  - Symmetric generator: produces a junction within 0.08 of center for every aspect in {1:1, 4:5, 9:16, 16:9}.
+  - Occlusion‑aware subjectSafety: a crafted meta with its subject under the shape scores strictly worse than the same meta with subject in the visible region.
+  - Hero safe inset: subject box lands fully inside the shape's interior at default tightness, for every shape in the registry.
+  - Burial guard: a layout with a base cell > 55 % covered is rejected from top‑K when alternatives exist.
+  - Orthogonality: Mosaic output is byte‑identical with `family: 'mosaic'` regardless of hero options present.
+  - Shape switch: same layout id and assignments before/after a shape change (only overlay differs).
 
 ### 11.2 Integration
 - Render `GridStage` with fixture photos (jsdom + Konva or Playwright component): placement equals `computePhotoPlacement` output; manual gesture writes a `ManualFrame` that `FrameEditorModal` then displays (round‑trip equality); export at 2× pixelRatio yields pixel‑equivalent framing (sample‑point comparison).
 - FrameEditorModal seeding fix: open with existing `manualFrame` ⇒ editor shows it (this is a regression test for the shared bug).
 
 ### 11.3 Design goldens
-- For 5 fixed seeds × {4, 7, 12, 24} photos × {1:1, 4:5, 16:9}: snapshot the variant‑strip SVGs. Reviewed once by eye, then locked as snapshots — catches scoring‑weight regressions.
+- Mosaic: 5 fixed seeds × {4, 7, 12, 24} photos × {1:1, 4:5, 16:9}: snapshot the variant‑strip SVGs. Reviewed once by eye, then locked as snapshots — catches scoring‑weight regressions.
+- Hero‑Center: 3 seeds × {circle, heart, triangle} × {1:1, 4:5, 16:9} × {3, 5, 9} photos — same review‑then‑lock process; these also finalize the per‑shape `safeInset` values.
 
 ### 11.4 Manual QA matrix
-Orientation mix (all portrait / all landscape / mixed / panorama), faces vs. no faces, duplicates, 1/2/29/30/31 photos, aspect switching mid‑edit, swap + lock + hero combinations, export 1×–4×, EXIF‑rotated phone photos, web (Chrome/Safari) + Tauri macOS/Windows.
+Orientation mix (all portrait / all landscape / mixed / panorama), faces vs. no faces, duplicates, 1/2/29/30/31 photos, aspect switching mid‑edit, swap + lock + hero combinations, export 1×–4×, EXIF‑rotated phone photos, web (Chrome/Safari) + Tauri macOS/Windows. **Hero‑Center axes:** every shape × {1:1, 9:16, 16:9} × {min/default/max size}, hero swap mid‑edit, family round‑trip (Mosaic → Hero → Mosaic preserves assignments), export with shape clipping at 4×.
 
 ---
 
@@ -328,9 +391,11 @@ Orientation mix (all portrait / all landscape / mixed / panorama), faces vs. no 
 ## 13. Open questions (resolve before/during Phase 1)
 1. **Profiles integration:** do grid settings join the existing Shape‑mode profile system now, or stay session‑only until profiles get a per‑mode namespace? (Recommend: defer, separate key.)
 2. **Variant count K:** 8 proposed. Confirm with design after first goldens.
-3. **Hero default:** auto‑pin the largest‑face photo, or no default hero? (Proposed: face‑weighting only, no auto‑pin.)
+3. **Hero default:** ~~auto‑pin or not?~~ **Resolved by family:** Mosaic = face‑weighting only, no auto‑pin; Hero‑Center = auto‑select largest face when nothing is pinned (§3.8).
 4. **Cell animation:** rect morph on aspect/variant change — ship in v1 or polish phase? (Proposed: v1, it sells the "re‑accommodate" story; trivially done via Konva tweens.)
 5. **`closeUpTightness` shared with Shape mode's setting or grid‑local?** (Proposed: grid‑local, same default 0.75.)
+6. **Hero shape set:** is {circle, heart, triangle, diamond, hexagon} the right v1 list? Axis‑aligned square was dropped (reads as "just another cell" over a rectangular grid; diamond carries that role better). Star and user‑SVG shapes are v2 candidates.
+7. **Heart asset:** confirm the existing `heart.svg` silhouette is the desired heart for the overlay, or commission a rounder "sticker" heart for this family.
 
 ---
 
@@ -343,8 +408,9 @@ Orientation mix (all portrait / all landscape / mixed / panorama), faces vs. no 
 | **2 — Render** | `GridStage`/`GridCell` on generated layouts; gutter/radius/background; aspect system + custom; variant strip; basic select | visual goldens approved; aspect morphing works |
 | **3 — Framing** | auto close‑up wiring; gestures→ManualFrame; FrameEditorModal integration; badges | round‑trip framing tests green; old PhotoSlot/CollageStage deleted |
 | **4 — Tray & interactions** | batch ingest, tray, swap DnD, hero, lock, remove, shuffle, stability matching live | UX flows 1–6 (§8) demoable end‑to‑end |
-| **5 — Production polish** | persistence, export fidelity test, perf pass, a11y pass, QA matrix, copy | all §8 flows + QA matrix pass on web + both desktops |
-| **6 — Ship** | flag removal, docs update, changelog | sign‑off |
+| **5 — Hero‑Center family** | `heroShapes.ts` registry + masks; symmetric generator; occlusion scoring (two‑stage); overlay render (clip + ring); family toggle + shape picker + size/ring controls; hero swap; engine + golden tests (§11.1, §11.3) | flows 9–10 (§8) demoable; Mosaic orthogonality test green; hero goldens approved |
+| **6 — Production polish** | persistence, export fidelity test, perf pass, a11y pass, QA matrix (incl. hero axes), copy | all §8 flows + QA matrix pass on web + both desktops |
+| **7 — Ship** | flag removal, docs update, changelog | sign‑off |
 
 Each phase lands as its own PR against `main`, behind a `grid.v2` feature flag until Phase 6 (the old grid remains the fallback until Phase 3 completes, then v2 becomes default‑on under the flag).
 
@@ -358,6 +424,9 @@ Each phase lands as its own PR against `main`, behind a `grid.v2` feature flag u
 | Konva perf with 30 clipped, rounded, draggable cells | low | only active cell listens to drag; static layer for non‑selected cells; measured in Phase 2 |
 | Gesture→ManualFrame math diverges from modal math | med | single shared conversion helper in `photoFraming.ts`; round‑trip test is mandatory |
 | Scope creep toward freeform collage | med | §2.2 non‑goals; freeform is a different product surface |
+| Occlusion scoring blows the 50 ms budget | low | two‑stage scoring (§3.8); masks precomputed per shape, not per candidate |
+| Shape clipping artifacts at export pixel ratios (jagged path edges) | low | `Path2D` scales analytically with the bbox — verify at 4× in the export fidelity test; no rasterized masks in the render path |
+| Hero shape covering a base subject despite scoring (locks force a bad layout) | med | burial guard + occlusion penalty; if locks make it unavoidable, surface the same "re‑check crop" badge on the affected cell |
 
 ---
 

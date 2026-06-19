@@ -7,6 +7,7 @@
 
 import type { Settings } from './components/ControlsPanel';
 import type { SelectedShape } from './components/ShapeBrowser';
+import type { HeroShapeId, LayoutFamily } from './gridLayout/types';
 import { isSafeUserShapeData } from './userShapes';
 
 export type SettingsSnapshot = {
@@ -23,16 +24,35 @@ export type Profile = SettingsSnapshot & {
 const PROFILES_KEY = 'collagemaker:profiles:v1';
 const LAST_SESSION_KEY = 'collagemaker:lastSession:v1';
 const GRID_V2_KEY = 'cm.grid.v2';
+const EXPORT_PREFERENCES_KEY = 'cm.export.v1';
+
+export type ExportPreferences = {
+  preventPureWhite: boolean;
+};
+
+export const DEFAULT_EXPORT_PREFERENCES: ExportPreferences = {
+  preventPureWhite: false,
+};
 
 export type GridV2Settings = {
+  family: LayoutFamily;
   aspectId: string;
   customAspectW: number;
   customAspectH: number;
   gutterFraction: number;
   cornerRadius: number;
   background: string;
+  bgTransparent: boolean;
   closeUp: boolean;
   closeUpTightness: number;
+  heroShapeId: HeroShapeId;
+  heroSizeFraction: number;
+  ringWidth: number | null;
+  svgTemplateId: string;
+  svgShowCutLines: boolean;
+  svgStrokeColor: string;
+  svgStrokeWidth: number;
+  svgShowBadges: boolean;
   seed: number;
 };
 
@@ -86,6 +106,19 @@ export function loadGridV2Settings(defaults: GridV2Settings): GridV2Settings {
 
 export function saveGridV2Settings(settings: GridV2Settings): void {
   writeJson(GRID_V2_KEY, sanitizeGridSettings(settings, settings));
+}
+
+// ---------- Global export preferences ----------
+
+export function loadExportPreferences(): ExportPreferences {
+  const stored = readJson<Partial<ExportPreferences>>(EXPORT_PREFERENCES_KEY, (v) =>
+    v && typeof v === 'object' ? v as Partial<ExportPreferences> : null
+  );
+  return sanitizeExportPreferences(stored);
+}
+
+export function saveExportPreferences(settings: ExportPreferences): void {
+  writeJson(EXPORT_PREFERENCES_KEY, sanitizeExportPreferences(settings));
 }
 
 // ---------- internals ----------
@@ -157,16 +190,48 @@ export function mergeSettings(defaults: Settings, stored: Partial<Settings>): Se
 
 function sanitizeGridSettings(settings: GridV2Settings, defaults: GridV2Settings): GridV2Settings {
   return {
+    family: isLayoutFamily(settings.family) ? settings.family : defaults.family,
     aspectId: typeof settings.aspectId === 'string' ? settings.aspectId : defaults.aspectId,
     customAspectW: saneNumber(settings.customAspectW, defaults.customAspectW, 0.2, 5),
     customAspectH: saneNumber(settings.customAspectH, defaults.customAspectH, 0.2, 5),
     gutterFraction: saneNumber(settings.gutterFraction, defaults.gutterFraction, 0, 0.08),
     cornerRadius: saneNumber(settings.cornerRadius, defaults.cornerRadius, 0, 32),
     background: typeof settings.background === 'string' ? settings.background : defaults.background,
+    bgTransparent:
+      typeof settings.bgTransparent === 'boolean' ? settings.bgTransparent : defaults.bgTransparent,
     closeUp: typeof settings.closeUp === 'boolean' ? settings.closeUp : defaults.closeUp,
     closeUpTightness: saneNumber(settings.closeUpTightness, defaults.closeUpTightness, 0.4, 0.95),
+    heroShapeId: isHeroShapeId(settings.heroShapeId) ? settings.heroShapeId : defaults.heroShapeId,
+    heroSizeFraction: saneNumber(settings.heroSizeFraction, defaults.heroSizeFraction, 0.25, 0.6),
+    ringWidth:
+      settings.ringWidth === null
+        ? null
+        : saneNumber(settings.ringWidth, defaults.ringWidth ?? 8, 0, 40),
+    svgTemplateId: typeof settings.svgTemplateId === 'string' ? settings.svgTemplateId : defaults.svgTemplateId,
+    svgShowCutLines:
+      typeof settings.svgShowCutLines === 'boolean' ? settings.svgShowCutLines : defaults.svgShowCutLines,
+    svgStrokeColor: typeof settings.svgStrokeColor === 'string' ? settings.svgStrokeColor : defaults.svgStrokeColor,
+    svgStrokeWidth: saneNumber(settings.svgStrokeWidth, defaults.svgStrokeWidth, 0.25, 8),
+    svgShowBadges: typeof settings.svgShowBadges === 'boolean' ? settings.svgShowBadges : defaults.svgShowBadges,
     seed: Math.max(1, Math.floor(saneNumber(settings.seed, defaults.seed, 1, Number.MAX_SAFE_INTEGER))),
   };
+}
+
+function sanitizeExportPreferences(settings: Partial<ExportPreferences> | null | undefined): ExportPreferences {
+  return {
+    preventPureWhite:
+      typeof settings?.preventPureWhite === 'boolean'
+        ? settings.preventPureWhite
+        : DEFAULT_EXPORT_PREFERENCES.preventPureWhite,
+  };
+}
+
+function isLayoutFamily(value: unknown): value is LayoutFamily {
+  return value === 'mosaic' || value === 'heroCenter' || value === 'svgTemplate';
+}
+
+function isHeroShapeId(value: unknown): value is HeroShapeId {
+  return value === 'circle' || value === 'heart' || value === 'triangle' || value === 'diamond' || value === 'hexagon';
 }
 
 function saneNumber(value: unknown, fallback: number, min: number, max: number) {

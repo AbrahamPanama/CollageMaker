@@ -1,5 +1,5 @@
 import type { jsPDF as JsPdf } from 'jspdf';
-import { saveExportBytes } from '../export';
+import { preventPureWhiteInImageData, saveExportBytes } from '../export';
 import { computePhotoPlacement } from '../photoFraming';
 import type { Photo } from '../types';
 import {
@@ -41,6 +41,7 @@ export type SaveFlipbookPdfOptions = {
   autoFrame: boolean;
   closeUpTightness: number;
   mirrorBackArtworkX?: boolean;
+  preventPureWhite?: boolean;
   dpi?: number;
   baseName: string;
 };
@@ -94,7 +95,8 @@ async function renderPdfPage(
     );
   }
 
-  pdf.setFillColor(255, 255, 255);
+  const pageWhite = options.preventPureWhite ? 254 : 255;
+  pdf.setFillColor(pageWhite, pageWhite, pageWhite);
   pdf.rect(0, 0, options.pageWidthMm, options.pageHeightMm, 'F');
 
   const slots = side === 'front' ? page.frontSlots : page.backSlots;
@@ -118,6 +120,7 @@ async function renderPdfPage(
       autoFrame: options.autoFrame,
       closeUpTightness: options.closeUpTightness,
       mirrorArtworkX: side === 'back' && Boolean(options.mirrorBackArtworkX),
+      preventPureWhite: Boolean(options.preventPureWhite),
       dpi: options.dpi ?? FALLBACK_DPI,
       imageCache,
     });
@@ -157,6 +160,7 @@ async function renderBladeRaster({
   autoFrame,
   closeUpTightness,
   mirrorArtworkX,
+  preventPureWhite,
   dpi,
   imageCache,
 }: {
@@ -168,6 +172,7 @@ async function renderBladeRaster({
   autoFrame: boolean;
   closeUpTightness: number;
   mirrorArtworkX: boolean;
+  preventPureWhite: boolean;
   dpi: number;
   imageCache: ImageCache;
 }) {
@@ -201,7 +206,7 @@ async function renderBladeRaster({
   const canvas = document.createElement('canvas');
   canvas.width = pxW;
   canvas.height = pxH;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: preventPureWhite });
   if (!ctx) throw new Error('Canvas is not available');
 
   const pxPerMm = pxW / slotW;
@@ -230,6 +235,13 @@ async function renderBladeRaster({
   ctx.restore();
 
   drawBladeRasterLabels(ctx, pxPerMm, bleed, partLabel, bladeId);
+
+  if (preventPureWhite) {
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (preventPureWhiteInImageData(imageData)) {
+      ctx.putImageData(imageData, 0, 0);
+    }
+  }
 
   return canvas.toDataURL('image/png');
 }

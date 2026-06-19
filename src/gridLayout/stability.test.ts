@@ -10,6 +10,7 @@ const previous: GridCell[] = [
 
 const nextLayout: ScoredLayout = {
   id: 'candidate',
+  family: 'mosaic',
   tree: null,
   cells: [
     { id: 'p3', photoId: 'p3', rect: { x: 0, y: 0, w: 0.5, h: 0.5 } },

@@ -1,6 +1,7 @@
 import { mulberry32, randomInt, shuffle } from './rng';
 import { scoreLayout } from './scoring';
-import type { GenOptions, LayoutTree, PhotoMeta, ScoredLayout } from './types';
+import { clampHeroSize, getHeroShape, makeHeroOverlayRect } from './heroShapes';
+import type { GenOptions, GridCell, HeroOverlay, LayoutFamily, LayoutTree, PhotoMeta, Rect, ScoredLayout } from './types';
 import { clampAspect, layoutTree, makeSplit, treeSignature } from './tree';
 
 const DEFAULT_TOP_K = 8;
@@ -11,11 +12,25 @@ export function generateLayouts(
   options: GenOptions = {},
   seed = 1
 ): ScoredLayout[] {
+  if ((options.family ?? 'mosaic') === 'heroCenter') {
+    return generateHeroCenterLayouts(metas, targetAspect, options, seed);
+  }
+  return generateMosaicLayouts(metas, targetAspect, options, seed, 'mosaic');
+}
+
+function generateMosaicLayouts(
+  metas: PhotoMeta[],
+  targetAspect: number,
+  options: GenOptions,
+  seed: number,
+  family: LayoutFamily,
+  heroOverlay?: HeroOverlay
+): ScoredLayout[] {
   const topK = options.topK ?? DEFAULT_TOP_K;
   if (metas.length === 0) return [];
   if (metas.length === 1) {
     const tree: LayoutTree = { type: 'leaf', photoId: metas[0].id, aspect: clampAspect(metas[0].aspect) };
-    return [buildScoredLayout(tree, metas, targetAspect, options, 0)];
+    return [buildScoredLayout(tree, metas, targetAspect, options, 0, String(0), family, heroOverlay)];
   }
 
   const next = mulberry32(seed);
@@ -25,7 +40,7 @@ export function generateLayouts(
   for (let index = 0; index < budget; index++) {
     const order = seedOrder(metas, next, index);
     const tree = buildRandomTree(order, next, 0);
-    addCandidate(bySignature, buildScoredLayout(tree, metas, targetAspect, options, index));
+    addCandidate(bySignature, buildScoredLayout(tree, metas, targetAspect, options, index, String(index), family, heroOverlay));
 
     if (metas.length === 2) {
       addCandidate(
@@ -35,7 +50,10 @@ export function generateLayouts(
           metas,
           targetAspect,
           options,
-          index + budget
+          index + budget,
+          String(index + budget),
+          family,
+          heroOverlay
         )
       );
     }
@@ -52,7 +70,9 @@ export function layoutFromTree(
   idSuffix = 'selected'
 ): ScoredLayout | null {
   if (!tree) return null;
-  return buildScoredLayout(tree, metas, targetAspect, options, 0, idSuffix);
+  const family = options.family ?? 'mosaic';
+  const heroOverlay = family === 'heroCenter' ? makeHeroOverlay(metas, targetAspect, options) : undefined;
+  return buildScoredLayout(tree, metas, targetAspect, options, 0, idSuffix, family, heroOverlay);
 }
 
 function buildScoredLayout(
@@ -61,7 +81,9 @@ function buildScoredLayout(
   targetAspect: number,
   options: GenOptions,
   index: number,
-  idSuffix = String(index)
+  idSuffix = String(index),
+  family: LayoutFamily,
+  heroOverlay?: HeroOverlay
 ): ScoredLayout {
   const cells = layoutTree(tree);
   const score = scoreLayout(cells, metas, {
@@ -70,13 +92,107 @@ function buildScoredLayout(
     heroPhotoId: options.heroPhotoId,
     targetAspect,
   });
+  const occlusionPenalty = heroOverlay ? scoreHeroOcclusion(cells, metas, heroOverlay) : 0;
   return {
     id: `${hashTree(tree)}-${idSuffix}`,
+    family,
     tree,
     cells,
-    score: score.total,
-    breakdown: score.breakdown,
+    heroOverlay,
+    score: score.total + occlusionPenalty,
+    breakdown: {
+      ...score.breakdown,
+      subjectSafety: score.breakdown.subjectSafety + occlusionPenalty,
+    },
   };
+}
+
+function generateHeroCenterLayouts(
+  metas: PhotoMeta[],
+  targetAspect: number,
+  options: GenOptions,
+  seed: number
+): ScoredLayout[] {
+  if (metas.length === 0) return [];
+  const heroOverlay = makeHeroOverlay(metas, targetAspect, options);
+  const baseMetas = metas.filter((meta) => meta.id !== heroOverlay.photoId);
+  if (baseMetas.length === 0) {
+    return [
+      {
+        id: `layout-hero-only-${heroOverlay.photoId}-${heroOverlay.shapeId}-${Math.round(heroOverlay.sizeFraction * 1000)}`,
+        family: 'heroCenter',
+        tree: null,
+        cells: [],
+        heroOverlay,
+        score: 0,
+        breakdown: {
+          aspectFit: 0,
+          subjectSafety: 0,
+          areaBalance: 0,
+          heroBoost: 0,
+          faceWeighting: 0,
+          minCell: 0,
+          adjacencyVariety: 0,
+        },
+      },
+    ];
+  }
+
+  const mosaicOptions: GenOptions = {
+    ...options,
+    family: 'mosaic',
+    heroPhotoId: null,
+    hero: undefined,
+  };
+  return generateMosaicLayouts(baseMetas, targetAspect, mosaicOptions, seed, 'heroCenter', heroOverlay).map((layout) => ({
+    ...layout,
+    id: `${layout.id}-hero-${heroOverlay.photoId}-${heroOverlay.shapeId}-${Math.round(heroOverlay.sizeFraction * 1000)}`,
+    family: 'heroCenter',
+    heroOverlay,
+  }));
+}
+
+function makeHeroOverlay(metas: PhotoMeta[], targetAspect: number, options: GenOptions): HeroOverlay {
+  const preferredHero = options.hero?.photoId ?? options.heroPhotoId ?? null;
+  const meta = metas.find((candidate) => candidate.id === preferredHero) ?? pickAutoHero(metas);
+  const shape = getHeroShape(options.hero?.shapeId);
+  const sizeFraction = clampHeroSize(options.hero?.sizeFraction ?? 0.42);
+  return {
+    photoId: meta.id,
+    shapeId: shape.id,
+    rect: makeHeroOverlayRect(targetAspect, sizeFraction),
+    sizeFraction,
+  };
+}
+
+function pickAutoHero(metas: PhotoMeta[]) {
+  return metas
+    .slice()
+    .sort((a, b) => {
+      const faceDelta = Number(b.subject?.source === 'face') - Number(a.subject?.source === 'face');
+      if (faceDelta !== 0) return faceDelta;
+      return subjectArea(b) - subjectArea(a);
+    })[0];
+}
+
+function subjectArea(meta: PhotoMeta) {
+  return meta.subject ? meta.subject.w * meta.subject.h : 0;
+}
+
+function scoreHeroOcclusion(cells: GridCell[], metas: PhotoMeta[], heroOverlay: HeroOverlay) {
+  const metaById = new Map(metas.map((meta) => [meta.id, meta]));
+  return cells.reduce((penalty, cell) => {
+    const subject = metaById.get(cell.photoId)?.subject;
+    if (!subject) return penalty;
+    const subjectRect: Rect = {
+      x: cell.rect.x + subject.x * cell.rect.w,
+      y: cell.rect.y + subject.y * cell.rect.h,
+      w: subject.w * cell.rect.w,
+      h: subject.h * cell.rect.h,
+    };
+    const ratio = intersectionArea(subjectRect, heroOverlay.rect) / Math.max(0.0001, subjectRect.w * subjectRect.h);
+    return penalty + ratio * 8;
+  }, 0);
 }
 
 function addCandidate(map: Map<string, ScoredLayout>, layout: ScoredLayout) {
@@ -132,10 +248,14 @@ function candidateBudget(n: number) {
 }
 
 function rectSignature(layout: ScoredLayout) {
-  return layout.cells
+  const cells = layout.cells
     .map((cell) => `${round(cell.rect.x)},${round(cell.rect.y)},${round(cell.rect.w)},${round(cell.rect.h)}`)
     .sort()
     .join('|');
+  const hero = layout.heroOverlay
+    ? `hero:${layout.heroOverlay.photoId}:${layout.heroOverlay.shapeId}:${round(layout.heroOverlay.rect.x)},${round(layout.heroOverlay.rect.y)},${round(layout.heroOverlay.rect.w)},${round(layout.heroOverlay.rect.h)}`
+    : 'hero:none';
+  return `${layout.family}|${cells}|${hero}`;
 }
 
 function hashTree(tree: LayoutTree) {
@@ -149,4 +269,12 @@ function hashTree(tree: LayoutTree) {
 
 function round(value: number) {
   return Math.round(value * 1000) / 1000;
+}
+
+function intersectionArea(a: Rect, b: Rect) {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.w, b.x + b.w);
+  const y2 = Math.min(a.y + a.h, b.y + b.h);
+  return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
 }
