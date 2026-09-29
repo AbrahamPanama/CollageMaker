@@ -102,8 +102,10 @@ export function ControlsPanel({
                 className={`cm-photo-tile ${
                   p.manualFrame
                     ? 'tile-manual'
-                    : p.subject?.source === 'face'
+                    : p.subject?.source === 'face' || p.subject?.source === 'hybrid'
                     ? 'tile-face'
+                    : p.subject?.source === 'person'
+                    ? 'tile-person'
                     : p.subject?.source === 'smartcrop'
                     ? 'tile-smartcrop'
                     : ''

@@ -44,6 +44,7 @@ export function FrameEditorModal({
 }: Props) {
   const cropRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const initializedAutoFrameRef = useRef<string | null>(null);
   const [box, setBox] = useState({ w: 1, h: 1 });
   const [isDragging, setIsDragging] = useState(false);
   const [frame, setFrame] = useState<ManualFrame>(() =>
@@ -53,6 +54,7 @@ export function FrameEditorModal({
 
   useEffect(() => {
     if (!photo) return;
+    initializedAutoFrameRef.current = null;
     setFrame(getInitialManualFrame(photo, closeUpTightness));
     setEcho(normalizeEchoFill(photo.echo));
   }, [photo, closeUpTightness]);
@@ -71,6 +73,13 @@ export function FrameEditorModal({
     observer.observe(el);
     return () => observer.disconnect();
   }, [photo]);
+
+  useEffect(() => {
+    if (!photo || box.w <= 1 || box.h <= 1) return;
+    if (initializedAutoFrameRef.current === photo.id) return;
+    initializedAutoFrameRef.current = photo.id;
+    setFrame(getInitialManualFrame(photo, closeUpTightness, box.w, box.h));
+  }, [box.h, box.w, closeUpTightness, photo]);
 
   const placement = useMemo(() => {
     if (!photo) return null;

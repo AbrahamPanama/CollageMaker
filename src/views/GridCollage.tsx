@@ -24,7 +24,7 @@ import {
 import { makeSvgTemplateVectorExportHooks } from '../gridLayout/svgTemplateExport';
 import type { GridCell, PhotoMeta, ScoredLayout } from '../gridLayout/types';
 import { loadPhoto, type LoadedPhoto } from '../photoIngest';
-import type { EchoFill, ManualFrame } from '../types';
+import type { EchoFill, ManualFrame, SubjectSource } from '../types';
 import {
   loadGridV2Settings,
   saveGridV2Settings,
@@ -990,7 +990,7 @@ function pickAutoHeroPhotoId(photos: LoadedPhoto[]) {
   return photos
     .slice()
     .sort((a, b) => {
-      const faceDelta = Number(b.subject?.source === 'face') - Number(a.subject?.source === 'face');
+      const faceDelta = Number(hasFaceSubject(b.subject?.source)) - Number(hasFaceSubject(a.subject?.source));
       if (faceDelta !== 0) return faceDelta;
       return subjectArea(b) - subjectArea(a);
     })[0]?.id ?? null;
@@ -998,6 +998,10 @@ function pickAutoHeroPhotoId(photos: LoadedPhoto[]) {
 
 function subjectArea(photo: LoadedPhoto) {
   return photo.subject ? photo.subject.w * photo.subject.h : 0;
+}
+
+function hasFaceSubject(source: SubjectSource | undefined) {
+  return source === 'face' || source === 'hybrid';
 }
 
 function getExportVectorStroke(stroke: string) {

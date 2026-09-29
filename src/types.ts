@@ -10,12 +10,19 @@ export type ShapeDef = {
   svgText: string;
 };
 
+export type SubjectSource = 'face' | 'person' | 'hybrid' | 'smartcrop';
+
 export type SubjectBox = {
   x: number;
   y: number;
   w: number;
   h: number;
-  source: 'face' | 'smartcrop';
+  source: SubjectSource;
+};
+
+export type SubjectDetections = {
+  faces: SubjectBox[];
+  people: SubjectBox[];
 };
 
 export type ManualFrame = {
@@ -37,6 +44,7 @@ export type Photo = {
   naturalWidth: number;
   naturalHeight: number;
   subject: SubjectBox | null;
+  detections?: SubjectDetections;
   manualFrame?: ManualFrame;
   echo?: EchoFill;
 };

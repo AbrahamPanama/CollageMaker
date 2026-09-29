@@ -4,6 +4,7 @@ import {
   normalizeEchoFill,
   placementUnderfills,
 } from '../photoFraming';
+import { createBlurredCanvas } from '../canvasBlur';
 import type { LoadedPhoto } from '../photoIngest';
 import type { ManualFrame } from '../types';
 import { footprint } from './tiling';
@@ -81,7 +82,7 @@ export function renderLegoFaceCanvas(options: LegoFaceRenderOptions): HTMLCanvas
       const echoPlacement = computeEchoPlacement(photo, canvas.width, canvas.height, placement);
       const echoSource =
         echo.blur > 0
-          ? blurToCanvas(options.image, photo.naturalWidth, photo.naturalHeight, echo.blur)
+          ? createBlurredCanvas(options.image, photo.naturalWidth, photo.naturalHeight, echo.blur)
           : options.image;
       ctx.drawImage(echoSource, echoPlacement.x, echoPlacement.y, echoPlacement.w, echoPlacement.h);
       if (echo.dim > 0) {
@@ -101,27 +102,6 @@ export function renderLegoFaceCanvas(options: LegoFaceRenderOptions): HTMLCanvas
   }
 
   ctx.restore();
-  return canvas;
-}
-
-// Gaussian-blur the source image into a natural-resolution canvas (matches the
-// 2D builder's useBlurredEchoImage approach so the echo reads the same on the
-// Konva canvas, the 3D texture, and export).
-function blurToCanvas(
-  image: CanvasImageSource,
-  naturalWidth: number,
-  naturalHeight: number,
-  blur: number
-): CanvasImageSource {
-  const w = Math.max(1, Math.round(naturalWidth));
-  const h = Math.max(1, Math.round(naturalHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return image;
-  ctx.filter = `blur(${Math.max(0, blur)}px)`;
-  ctx.drawImage(image, 0, 0, w, h);
   return canvas;
 }
 

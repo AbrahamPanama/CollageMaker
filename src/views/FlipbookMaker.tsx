@@ -25,7 +25,7 @@ import {
 } from '../flipbook/logic';
 import { computePhotoPlacement } from '../photoFraming';
 import { loadPhoto } from '../photoIngest';
-import { detectSubject } from '../smartFrame';
+import { detectPhotoSubjects } from '../smartFrame';
 import { revokePhotos } from '../video/bake';
 import { createFrameCache, deriveFrames, getTrimDuration } from '../video/deriveFrames';
 import type { DeriveProgress, ExtractionResult, ExtractionWarning, FrameCache, VideoSource } from '../video/types';
@@ -343,9 +343,17 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         const photo = photos[i];
         const image = await loadImage(photo.src);
         if (image) {
-          const subject = await detectSubject(image);
+          const detection = await detectPhotoSubjects(image);
           setPhotos((prev) =>
-            prev.map((item) => (item.id === photo.id ? { ...item, subject } : item))
+            prev.map((item) =>
+              item.id === photo.id
+                ? {
+                    ...item,
+                    subject: detection.subject,
+                    detections: detection.detections,
+                  }
+                : item
+            )
           );
         }
         setAnalyzing({ done: i + 1, total: photos.length });
@@ -514,8 +522,10 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
                 className={`cm-flip-photo ${
                   photo.manualFrame
                     ? 'is-manual'
-                    : photo.subject?.source === 'face'
+                    : photo.subject?.source === 'face' || photo.subject?.source === 'hybrid'
                       ? 'is-face'
+                      : photo.subject?.source === 'person'
+                        ? 'is-person'
                       : photo.subject?.source === 'smartcrop'
                         ? 'is-smartcrop'
                         : ''
@@ -1287,7 +1297,13 @@ function BladeArt({
             width={placement.subjectBox.w}
             height={placement.subjectBox.h}
             fill="none"
-            stroke={placement.subjectBox.source === 'face' ? '#22c55e' : '#f59e0b'}
+            stroke={
+              placement.subjectBox.source === 'face' || placement.subjectBox.source === 'hybrid'
+                ? '#22c55e'
+                : placement.subjectBox.source === 'person'
+                  ? '#38bdf8'
+                  : '#f59e0b'
+            }
             strokeWidth={small ? 0.7 : 1}
             vectorEffect="non-scaling-stroke"
             transform={transform}

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
+import { createBlurredCanvas } from '../canvasBlur';
 
 type EchoBitmap = HTMLImageElement | HTMLCanvasElement;
 
@@ -9,43 +10,25 @@ export function useBlurredEchoImage(
   blur: number
 ): EchoBitmap | undefined {
   const safeBlur = Number.isFinite(blur) ? Math.max(0, Math.min(40, Math.round(blur))) : 0;
-  const [bitmap, setBitmap] = useState<EchoBitmap | undefined>(image);
-
-  useEffect(() => {
-    if (!image) {
-      setBitmap(undefined);
-      return;
-    }
-    if (safeBlur <= 0) {
-      setBitmap(image);
-      return;
-    }
+  return useMemo(() => {
+    if (!image) return undefined;
+    if (safeBlur <= 0) return image;
 
     const cached = blurCache.get(image)?.get(safeBlur);
-    if (cached) {
-      setBitmap(cached);
-      return;
-    }
+    if (cached) return cached;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, image.naturalWidth || image.width);
-    canvas.height = Math.max(1, image.naturalHeight || image.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      setBitmap(image);
-      return;
-    }
-
-    ctx.filter = `blur(${safeBlur}px)`;
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const canvas = createBlurredCanvas(
+      image,
+      image.naturalWidth || image.width,
+      image.naturalHeight || image.height,
+      safeBlur
+    );
     let byBlur = blurCache.get(image);
     if (!byBlur) {
       byBlur = new Map();
       blurCache.set(image, byBlur);
     }
     byBlur.set(safeBlur, canvas);
-    setBitmap(canvas);
+    return canvas;
   }, [image, safeBlur]);
-
-  return bitmap;
 }

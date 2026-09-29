@@ -11,7 +11,13 @@ import {
 import type Konva from 'konva';
 import useImage from 'use-image';
 import type { Cell, Photo, Point } from '../types';
-import { computePhotoPlacement } from '../photoFraming';
+import {
+  computeEchoPlacement,
+  computePhotoPlacement,
+  normalizeEchoFill,
+  placementUnderfills,
+} from '../photoFraming';
+import { useBlurredEchoImage } from './echoImage';
 
 type Props = {
   width: number;          // logical width (cells are positioned in this space)
@@ -67,6 +73,8 @@ function PhotoCell({
   onEditPhoto?: (photoId: string) => void;
 }) {
   const [img] = useImage(photo?.src ?? '');
+  const echo = normalizeEchoFill(photo?.echo);
+  const echoImage = useBlurredEchoImage(img, echo.blur);
   const x = cell.x + gap / 2;
   const y = cell.y + gap / 2;
   const w = Math.max(1, cell.w - gap);
@@ -88,6 +96,10 @@ function PhotoCell({
     closeUp,
     closeUpTightness,
   });
+  const echoPlacement =
+    echo.mode === 'auto' && placementUnderfills(placement, w, h)
+      ? computeEchoPlacement(photo, w, h, placement)
+      : null;
 
   return (
     <Group
@@ -105,12 +117,32 @@ function PhotoCell({
         e.target.getStage()?.container().style.removeProperty('cursor');
       }}
     >
+      {echoPlacement && echoImage && (
+        <>
+          <KonvaImage
+            image={echoImage}
+            x={echoPlacement.x}
+            y={echoPlacement.y}
+            width={echoPlacement.w}
+            height={echoPlacement.h}
+            listening={false}
+          />
+          {echo.dim > 0 && (
+            <Rect width={w} height={h} fill="#000" opacity={echo.dim / 100} listening={false} />
+          )}
+        </>
+      )}
       <KonvaImage
         image={img}
         x={placement.x}
         y={placement.y}
         width={placement.w}
         height={placement.h}
+        stroke={echo.outline && echoPlacement ? 'rgba(255,255,255,.72)' : undefined}
+        strokeWidth={echo.outline && echoPlacement ? 1 : 0}
+        shadowColor={echo.outline && echoPlacement ? '#000' : undefined}
+        shadowBlur={echo.outline && echoPlacement ? 4 : 0}
+        shadowOpacity={echo.outline && echoPlacement ? 0.35 : 0}
       />
       {showDetections && placement.subjectBox && (
         <Rect
@@ -118,7 +150,13 @@ function PhotoCell({
           y={placement.subjectBox.y}
           width={placement.subjectBox.w}
           height={placement.subjectBox.h}
-          stroke={placement.subjectBox.source === 'face' ? '#22c55e' : '#f59e0b'}
+          stroke={
+            placement.subjectBox.source === 'face' || placement.subjectBox.source === 'hybrid'
+              ? '#22c55e'
+              : placement.subjectBox.source === 'person'
+                ? '#38bdf8'
+                : '#f59e0b'
+          }
           strokeWidth={1.5}
           listening={false}
         />

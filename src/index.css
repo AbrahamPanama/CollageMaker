@@ -652,6 +652,7 @@ input[type="number"], input[type="text"] {
   transform: scale(1.04);
 }
 .cm-photo-tile.tile-face { border-color: var(--accent); }
+.cm-photo-tile.tile-person { border-color: #38bdf8; }
 .cm-photo-tile.tile-smartcrop { border-color: #f59e0b; }
 .cm-photo-tile.tile-manual { border-color: #38bdf8; box-shadow: 0 0 0 1px rgba(56, 189, 248, .55); }
 .cm-photo-tile:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px var(--accent), 0 6px 14px rgba(0,0,0,.28); }
@@ -1279,6 +1280,8 @@ input[type="number"], input[type="text"] {
   pointer-events: none;
 }
 .cm-frame-subject.is-face { border-color: var(--accent); }
+.cm-frame-subject.is-hybrid { border-color: var(--accent); }
+.cm-frame-subject.is-person { border-color: #38bdf8; }
 .cm-frame-zoom {
   max-width: 520px;
   width: 100%;
@@ -2251,6 +2254,7 @@ input[type="number"], input[type="text"] {
   cursor: grabbing;
 }
 .cm-flip-photo.is-face { border-color: var(--accent); }
+.cm-flip-photo.is-person { border-color: #38bdf8; }
 .cm-flip-photo.is-smartcrop { border-color: #f59e0b; }
 .cm-flip-photo.is-manual {
   border-color: #38bdf8;

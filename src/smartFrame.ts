@@ -1,19 +1,12 @@
-// Smart subject detection. MediaPipe BlazeFace (fast) + face-api.js SSD MobileNet
-// (more accurate at distant faces) run together; smartcrop is the fallback
-// when both models find nothing. All three libs are dynamically imported so the
-// initial app bundle stays small — they only download when the user actually
-// adds a photo.
+// Smart subject detection. Face detectors provide hard framing anchors while
+// MediaPipe EfficientDet contributes softer person/body bounds. Smartcrop is the
+// fallback when neither model finds a subject. Models are loaded lazily and are
+// bundled under public/ so detection works offline in both web and Tauri builds.
 
-import type { FaceDetector } from '@mediapipe/tasks-vision';
-
-export type SubjectBox = {
-  /** Normalized 0..1 in image pixel coordinates */
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  source: 'face' | 'smartcrop';
-};
+import type { FaceDetector, ObjectDetector } from '@mediapipe/tasks-vision';
+import { buildPhotoSubjectDetection, dedupeSubjectBoxes, unionSubjectBoxes } from './subjectDetection';
+import type { PhotoSubjectDetection } from './subjectDetection';
+import type { SubjectBox } from './types';
 
 type DetectableSource = HTMLImageElement | HTMLCanvasElement;
 type SubjectInput = DetectableSource | ImageBitmap;
@@ -24,7 +17,22 @@ type DetectSubjectOptions = {
 // All model assets are bundled into the app under public/ so it runs fully offline.
 const MEDIAPIPE_WASM = `${import.meta.env.BASE_URL}mediapipe-wasm`;
 const FACE_MODEL_URL = `${import.meta.env.BASE_URL}models/blaze_face_short_range.tflite`;
+const PERSON_MODEL_URL = `${import.meta.env.BASE_URL}models/efficientdet_lite0_uint8.tflite`;
 const FACE_API_WEIGHTS = `${import.meta.env.BASE_URL}face-api-models`;
+const PERSON_DETECTION_LONG_EDGE = 1280;
+
+async function loadVisionRuntime() {
+  const mod = await import('@mediapipe/tasks-vision');
+  const fileset = await mod.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+  return { mod, fileset };
+}
+
+let visionRuntimePromise: ReturnType<typeof loadVisionRuntime> | null = null;
+
+function getVisionRuntime() {
+  if (!visionRuntimePromise) visionRuntimePromise = loadVisionRuntime();
+  return visionRuntimePromise;
+}
 
 let detectorPromise: Promise<FaceDetector | null> | null = null;
 
@@ -32,9 +40,8 @@ function getFaceDetector(): Promise<FaceDetector | null> {
   if (!detectorPromise) {
     detectorPromise = (async () => {
       try {
-        const mod = await import('@mediapipe/tasks-vision');
-        const vision = await mod.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
-        return await mod.FaceDetector.createFromOptions(vision, {
+        const { mod, fileset } = await getVisionRuntime();
+        return await mod.FaceDetector.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: FACE_MODEL_URL },
           runningMode: 'IMAGE',
           minDetectionConfidence: 0.15,
@@ -46,6 +53,29 @@ function getFaceDetector(): Promise<FaceDetector | null> {
     })();
   }
   return detectorPromise;
+}
+
+let personDetectorPromise: Promise<ObjectDetector | null> | null = null;
+
+function getPersonDetector(): Promise<ObjectDetector | null> {
+  if (!personDetectorPromise) {
+    personDetectorPromise = (async () => {
+      try {
+        const { mod, fileset } = await getVisionRuntime();
+        return await mod.ObjectDetector.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: PERSON_MODEL_URL },
+          runningMode: 'IMAGE',
+          categoryAllowlist: ['person'],
+          scoreThreshold: 0.22,
+          maxResults: 100,
+        });
+      } catch (e) {
+        console.warn('MediaPipe person detector failed to load', e);
+        return null;
+      }
+    })();
+  }
+  return personDetectorPromise;
 }
 
 let faceApiPromise: Promise<boolean> | null = null;
@@ -134,7 +164,7 @@ async function detectWithFaceApi(
   }
 }
 
-async function detectFaces(img: DetectableSource, options: DetectSubjectOptions): Promise<SubjectBox | null> {
+async function detectFaces(img: DetectableSource, options: DetectSubjectOptions): Promise<SubjectBox[]> {
   const { width: W, height: H } = getSourceSize(img);
   const detections: DetectedBox[] = [];
 
@@ -156,7 +186,7 @@ async function detectFaces(img: DetectableSource, options: DetectSubjectOptions)
       if (centerCanvas) detectOnSource(detector, centerCanvas, cropX, cropY, detections);
     }
 
-    if (W >= 1600 && H >= 1200 && detections.length === 0) {
+    if (W >= 1600 && H >= 1200 && detections.length < 3) {
       const halfW = Math.round(W / 2);
       const halfH = Math.round(H / 2);
       for (let qy = 0; qy < 2; qy++) {
@@ -175,35 +205,50 @@ async function detectFaces(img: DetectableSource, options: DetectSubjectOptions)
     await detectWithFaceApi(img, detections);
   }
 
-  if (detections.length === 0) return null;
+  return dedupeSubjectBoxes(
+    detections.map((box) => {
+      const padX = box.w * 0.14;
+      const padTop = box.h * 0.22;
+      const padBottom = box.h * 0.3;
+      return {
+        x: (box.x - padX) / W,
+        y: (box.y - padTop) / H,
+        w: (box.w + padX * 2) / W,
+        h: (box.h + padTop + padBottom) / H,
+        source: 'face' as const,
+      };
+    })
+  );
+}
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const d of detections) {
-    minX = Math.min(minX, d.x);
-    minY = Math.min(minY, d.y);
-    maxX = Math.max(maxX, d.x + d.w);
-    maxY = Math.max(maxY, d.y + d.h);
+async function detectPeople(img: DetectableSource): Promise<SubjectBox[]> {
+  const detector = await getPersonDetector();
+  if (!detector) return [];
+
+  const source = downscaleSource(img, PERSON_DETECTION_LONG_EDGE);
+  const { width: W, height: H } = getSourceSize(source);
+  try {
+    const result = detector.detect(source);
+    return dedupeSubjectBoxes(
+      result.detections.flatMap((detection) => {
+        const box = detection.boundingBox;
+        if (!box) return [];
+        const padX = box.width * 0.025;
+        const padTop = box.height * 0.025;
+        const padBottom = box.height * 0.035;
+        return [{
+          x: (box.originX - padX) / W,
+          y: (box.originY - padTop) / H,
+          w: (box.width + padX * 2) / W,
+          h: (box.height + padTop + padBottom) / H,
+          source: 'person' as const,
+        }];
+      })
+    );
+  } catch (e) {
+    console.warn('person detection failed', e);
+    return [];
   }
-
-  const w = maxX - minX;
-  const h = maxY - minY;
-  const padX = w * 0.15;
-  const padY = h * 0.3;
-  minX = Math.max(0, minX - padX);
-  minY = Math.max(0, minY - padY);
-  maxX = Math.min(W, maxX + padX);
-  maxY = Math.min(H, maxY + padY);
-
-  return {
-    x: minX / W,
-    y: minY / H,
-    w: (maxX - minX) / W,
-    h: (maxY - minY) / H,
-    source: 'face',
-  };
 }
 
 async function detectSmartCrop(img: DetectableSource): Promise<SubjectBox | null> {
@@ -230,8 +275,24 @@ async function detectSmartCrop(img: DetectableSource): Promise<SubjectBox | null
 export async function detectSubject(source: SubjectInput, options: DetectSubjectOptions = {}): Promise<SubjectBox | null> {
   const img = normalizeDetectionSource(source);
   const faces = await detectFaces(img, options);
-  if (faces) return faces;
+  const faceUnion = unionSubjectBoxes(faces, 'face');
+  if (faceUnion) return faceUnion;
   return await detectSmartCrop(img);
+}
+
+export async function detectPhotoSubjects(
+  source: SubjectInput,
+  options: DetectSubjectOptions = {}
+): Promise<PhotoSubjectDetection> {
+  const img = normalizeDetectionSource(source);
+  const [faces, people] = await Promise.all([
+    detectFaces(img, options),
+    detectPeople(img),
+  ]);
+  const fallback = faces.length === 0 && people.length === 0
+    ? await detectSmartCrop(img)
+    : null;
+  return buildPhotoSubjectDetection(faces, people, fallback);
 }
 
 function normalizeDetectionSource(source: SubjectInput): DetectableSource {
@@ -249,4 +310,17 @@ function getSourceSize(source: DetectableSource) {
     return { width: source.naturalWidth, height: source.naturalHeight };
   }
   return { width: source.width, height: source.height };
+}
+
+function downscaleSource(source: DetectableSource, longEdge: number): DetectableSource {
+  const { width, height } = getSourceSize(source);
+  const scale = Math.min(1, longEdge / Math.max(width, height));
+  if (scale >= 0.999) return source;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return source;
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
 }

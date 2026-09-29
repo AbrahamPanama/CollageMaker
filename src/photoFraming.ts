@@ -1,4 +1,5 @@
-import type { EchoFill, ManualFrame, Photo } from './types';
+import type { EchoFill, ManualFrame, Photo, SubjectBox } from './types';
+import { buildPhotoSubjectDetection, unionSubjectBoxes } from './subjectDetection';
 
 export const MAX_MANUAL_ZOOM = 4;
 export const MIN_MANUAL_ZOOM = 0.25;
@@ -35,6 +36,7 @@ export function computePhotoPlacement(
   const w = Math.max(1, frameW);
   const h = Math.max(1, frameH);
   const coverScale = Math.max(w / photo.naturalWidth, h / photo.naturalHeight);
+  const framingSubject = getFramingSubject(photo);
 
   let scale = coverScale;
   let cx = 0.5;
@@ -45,20 +47,28 @@ export function computePhotoPlacement(
     scale = coverScale * frame.zoom;
     cx = frame.cx;
     cy = frame.cy;
-  } else if (options.closeUp && photo.subject) {
-    const subjPixW = Math.max(1, photo.subject.w * photo.naturalWidth);
-    const subjPixH = Math.max(1, photo.subject.h * photo.naturalHeight);
+  } else if (options.closeUp && framingSubject) {
+    const subjPixW = Math.max(1, framingSubject.w * photo.naturalWidth);
+    const subjPixH = Math.max(1, framingSubject.h * photo.naturalHeight);
     const closeupScale = Math.min(
       (w * options.closeUpTightness) / subjPixW,
       (h * options.closeUpTightness) / subjPixH
     );
     scale = Math.max(coverScale, Math.min(closeupScale, MAX_AUTO_UPSCALE));
-    cx = photo.subject.x + photo.subject.w / 2;
-    cy = photo.subject.y + photo.subject.h / 2;
+    cx = framingSubject.x + framingSubject.w / 2;
+    cy = framingSubject.y + framingSubject.h / 2;
   }
 
   const imgW = photo.naturalWidth * scale;
   const imgH = photo.naturalHeight * scale;
+  const faceBox = getFaceConstraint(photo);
+  if (!photo.manualFrame && faceBox) {
+    cx = clampCenterToKeepBox(cx, faceBox.x, faceBox.w, imgW, w);
+    cy = clampCenterToKeepBox(cy, faceBox.y, faceBox.h, imgH, h);
+  } else {
+    cx = clampCenter(cx, imgW, w);
+    cy = clampCenter(cy, imgH, h);
+  }
   const x = clampOffset(w / 2 - cx * imgW, imgW, w);
   const y = clampOffset(h / 2 - cy * imgH, imgH, h);
 
@@ -72,13 +82,13 @@ export function computePhotoPlacement(
     zoom: scale / Math.max(0.0001, coverScale),
     cx,
     cy,
-    subjectBox: photo.subject
+    subjectBox: framingSubject
       ? {
-          x: x + photo.subject.x * imgW,
-          y: y + photo.subject.y * imgH,
-          w: photo.subject.w * imgW,
-          h: photo.subject.h * imgH,
-          source: photo.subject.source,
+          x: x + framingSubject.x * imgW,
+          y: y + framingSubject.y * imgH,
+          w: framingSubject.w * imgW,
+          h: framingSubject.h * imgH,
+          source: framingSubject.source,
         }
       : null,
   };
@@ -86,15 +96,34 @@ export function computePhotoPlacement(
 
 export function getInitialManualFrame(
   photo: Photo,
-  closeUpTightness: number
+  closeUpTightness: number,
+  frameW?: number,
+  frameH?: number
 ): ManualFrame {
   if (photo.manualFrame) return clampManualFrame(photo.manualFrame);
-  if (!photo.subject) return { cx: 0.5, cy: 0.5, zoom: 1 };
+  if (
+    frameW !== undefined &&
+    frameH !== undefined &&
+    frameW > 1 &&
+    frameH > 1
+  ) {
+    const placement = computePhotoPlacement(photo, frameW, frameH, {
+      closeUp: true,
+      closeUpTightness,
+    });
+    return clampManualFrame({
+      cx: placement.cx,
+      cy: placement.cy,
+      zoom: placement.zoom,
+    });
+  }
+  const framingSubject = getFramingSubject(photo);
+  if (!framingSubject) return { cx: 0.5, cy: 0.5, zoom: 1 };
 
-  const subjectMax = Math.max(photo.subject.w, photo.subject.h, 0.001);
+  const subjectMax = Math.max(framingSubject.w, framingSubject.h, 0.001);
   return clampManualFrame({
-    cx: photo.subject.x + photo.subject.w / 2,
-    cy: photo.subject.y + photo.subject.h / 2,
+    cx: framingSubject.x + framingSubject.w / 2,
+    cy: framingSubject.y + framingSubject.h / 2,
     zoom: closeUpTightness / subjectMax,
   });
 }
@@ -131,7 +160,8 @@ export function getFitSubjectsFrame(photo: Photo, frameW: number, frameH: number
   const w = Math.max(1, frameW);
   const h = Math.max(1, frameH);
   const coverScale = Math.max(w / photo.naturalWidth, h / photo.naturalHeight);
-  if (!photo.subject) {
+  const framingSubject = getFramingSubject(photo);
+  if (!framingSubject) {
     const containScale = Math.min(w / photo.naturalWidth, h / photo.naturalHeight);
     return constrainManualFrame(
       { cx: 0.5, cy: 0.5, zoom: containScale / Math.max(0.0001, coverScale) },
@@ -141,14 +171,14 @@ export function getFitSubjectsFrame(photo: Photo, frameW: number, frameH: number
     );
   }
 
-  const subjPixW = Math.max(1, photo.subject.w * photo.naturalWidth);
-  const subjPixH = Math.max(1, photo.subject.h * photo.naturalHeight);
+  const subjPixW = Math.max(1, framingSubject.w * photo.naturalWidth);
+  const subjPixH = Math.max(1, framingSubject.h * photo.naturalHeight);
   const subjectFitScale = Math.min(w / subjPixW, h / subjPixH);
   const zoom = Math.min(1, subjectFitScale / Math.max(0.0001, coverScale));
   return constrainManualFrame(
     {
-      cx: photo.subject.x + photo.subject.w / 2,
-      cy: photo.subject.y + photo.subject.h / 2,
+      cx: framingSubject.x + framingSubject.w / 2,
+      cy: framingSubject.y + framingSubject.h / 2,
       zoom,
     },
     photo,
@@ -182,6 +212,7 @@ export function computeEchoPlacement(
   const scale = foreground.coverScale;
   const imgW = photo.naturalWidth * scale;
   const imgH = photo.naturalHeight * scale;
+  const framingSubject = getFramingSubject(photo);
   const x = clampOffset(w / 2 - foreground.cx * imgW, imgW, w);
   const y = clampOffset(h / 2 - foreground.cy * imgH, imgH, h);
   return {
@@ -194,13 +225,13 @@ export function computeEchoPlacement(
     zoom: 1,
     cx: foreground.cx,
     cy: foreground.cy,
-    subjectBox: photo.subject
+    subjectBox: framingSubject
       ? {
-          x: x + photo.subject.x * imgW,
-          y: y + photo.subject.y * imgH,
-          w: photo.subject.w * imgW,
-          h: photo.subject.h * imgH,
-          source: photo.subject.source,
+          x: x + framingSubject.x * imgW,
+          y: y + framingSubject.y * imgH,
+          w: framingSubject.w * imgW,
+          h: framingSubject.h * imgH,
+          source: framingSubject.source,
         }
       : null,
   };
@@ -234,6 +265,43 @@ function clampCenter(value: number, imageSize: number, frameSize: number): numbe
   const halfRange = Math.min(0.5, Math.max(0, frameSize - imageSize) / (2 * imageSize));
   const inset = 0.5 - halfRange;
   return clamp(value, inset, 1 - inset);
+}
+
+function clampCenterToKeepBox(
+  desired: number,
+  boxStart: number,
+  boxSize: number,
+  imageSize: number,
+  frameSize: number
+): number {
+  const imageMin = clampCenter(0, imageSize, frameSize);
+  const imageMax = clampCenter(1, imageSize, frameSize);
+  const halfViewport = frameSize / (2 * Math.max(0.0001, imageSize));
+  const focusMin = boxStart + boxSize - halfViewport;
+  const focusMax = boxStart + halfViewport;
+  const min = Math.max(imageMin, focusMin);
+  const max = Math.min(imageMax, focusMax);
+
+  if (min <= max) return clamp(desired, min, max);
+  return clamp(boxStart + boxSize / 2, imageMin, imageMax);
+}
+
+function getFaceConstraint(photo: Photo): SubjectBox | null {
+  const detectedFaces = photo.detections?.faces ?? [];
+  if (detectedFaces.length > 0) return unionSubjectBoxes(detectedFaces, 'face');
+  return photo.subject?.source === 'face' ? photo.subject : null;
+}
+
+function getFramingSubject(photo: Photo): SubjectBox | null {
+  const detections = photo.detections;
+  if (!detections || (detections.faces.length === 0 && detections.people.length === 0)) {
+    return photo.subject;
+  }
+  return buildPhotoSubjectDetection(
+    detections.faces,
+    detections.people,
+    photo.subject
+  ).subject ?? photo.subject;
 }
 
 function clampOffset(value: number, imageSize: number, frameSize: number): number {

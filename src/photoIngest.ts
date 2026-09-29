@@ -1,4 +1,4 @@
-import { detectSubject } from './smartFrame';
+import { detectPhotoSubjects } from './smartFrame';
 import type { Photo } from './types';
 
 export type LoadedPhoto = Photo & { name: string };
@@ -7,7 +7,7 @@ export async function loadPhoto(file: File): Promise<LoadedPhoto | null> {
   const src = await readFile(file);
   const image = await loadImage(src);
   if (!image) return null;
-  const subject = await detectSubject(image);
+  const detection = await detectPhotoSubjects(image);
   return {
     id:
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -17,7 +17,8 @@ export async function loadPhoto(file: File): Promise<LoadedPhoto | null> {
     name: file.name,
     naturalWidth: image.naturalWidth,
     naturalHeight: image.naturalHeight,
-    subject,
+    subject: detection.subject,
+    detections: detection.detections,
   };
 }
 

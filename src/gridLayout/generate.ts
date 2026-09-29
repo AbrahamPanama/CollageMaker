@@ -3,6 +3,7 @@ import { scoreLayout } from './scoring';
 import { clampHeroSize, getHeroShape, makeHeroOverlayRect } from './heroShapes';
 import type { GenOptions, GridCell, HeroOverlay, LayoutFamily, LayoutTree, PhotoMeta, Rect, ScoredLayout } from './types';
 import { clampAspect, layoutTree, makeSplit, treeSignature } from './tree';
+import type { SubjectSource } from '../types';
 
 const DEFAULT_TOP_K = 8;
 
@@ -169,7 +170,7 @@ function pickAutoHero(metas: PhotoMeta[]) {
   return metas
     .slice()
     .sort((a, b) => {
-      const faceDelta = Number(b.subject?.source === 'face') - Number(a.subject?.source === 'face');
+      const faceDelta = Number(hasFaceSubject(b.subject?.source)) - Number(hasFaceSubject(a.subject?.source));
       if (faceDelta !== 0) return faceDelta;
       return subjectArea(b) - subjectArea(a);
     })[0];
@@ -177,6 +178,10 @@ function pickAutoHero(metas: PhotoMeta[]) {
 
 function subjectArea(meta: PhotoMeta) {
   return meta.subject ? meta.subject.w * meta.subject.h : 0;
+}
+
+function hasFaceSubject(source: SubjectSource | undefined) {
+  return source === 'face' || source === 'hybrid';
 }
 
 function scoreHeroOcclusion(cells: GridCell[], metas: PhotoMeta[], heroOverlay: HeroOverlay) {

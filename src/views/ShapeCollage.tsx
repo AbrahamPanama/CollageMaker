@@ -15,8 +15,8 @@ import {
   findAutoParamsForCount,
   generateCells,
 } from '../shapeCollage';
-import type { ManualFrame, Photo } from '../types';
-import { detectSubject } from '../smartFrame';
+import type { EchoFill, ManualFrame, Photo } from '../types';
+import { detectPhotoSubjects } from '../smartFrame';
 
 import { computeCellContour, contourLoopsToSvgPath } from '../contour';
 import { ShapeStage } from '../components/ShapeStage';
@@ -194,7 +194,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const src = await readFileAsDataURL(file);
     const img = await loadImage(src);
     if (!img) return null;
-    const subject = await detectSubject(img);
+    const detection = await detectPhotoSubjects(img);
     return {
       id:
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -203,7 +203,8 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
       src,
       naturalWidth: img.naturalWidth,
       naturalHeight: img.naturalHeight,
-      subject,
+      subject: detection.subject,
+      detections: detection.detections,
     };
   };
 
@@ -292,6 +293,12 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     );
   };
 
+  const handleSaveEcho = (photoId: string, echo: EchoFill | undefined) => {
+    setPhotos((prev) =>
+      prev.map((photo) => (photo.id === photoId ? { ...photo, echo } : photo))
+    );
+  };
+
   const handleResetManualFrame = (photoId: string) => {
     setPhotos((prev) =>
       prev.map((photo) => {
@@ -311,11 +318,17 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         const p = photos[i];
         const img = await loadImage(p.src);
         if (img) {
-          const subject = await detectSubject(img);
+          const detection = await detectPhotoSubjects(img);
           setPhotos((prev) => {
             const next = prev.slice();
             const idx = next.findIndex((x) => x.id === p.id);
-            if (idx >= 0) next[idx] = { ...next[idx], subject };
+            if (idx >= 0) {
+              next[idx] = {
+                ...next[idx],
+                subject: detection.subject,
+                detections: detection.detections,
+              };
+            }
             return next;
           });
         }
@@ -735,6 +748,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         onClose={() => setEditingPhotoId(null)}
         onSave={handleSaveManualFrame}
         onReset={handleResetManualFrame}
+        onEchoChange={handleSaveEcho}
       />
     </main>
   );

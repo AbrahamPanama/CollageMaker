@@ -95,7 +95,10 @@ function faceWeightingPenalty(cells: GridCell[], metas: Map<string, PhotoMeta>) 
   if (cells.length <= 1) return 0;
   const sortedAreas = cells.map((cell) => rectArea(cell.rect)).sort((a, b) => a - b);
   const median = sortedAreas[Math.floor(sortedAreas.length / 2)] ?? 0;
-  const faceCells = cells.filter((cell) => metas.get(cell.photoId)?.subject?.source === 'face');
+  const faceCells = cells.filter((cell) => {
+    const source = metas.get(cell.photoId)?.subject?.source;
+    return source === 'face' || source === 'hybrid';
+  });
   if (faceCells.length === 0) return 0;
   return average(faceCells.map((cell) => (rectArea(cell.rect) < median ? 1 : 0)));
 }
