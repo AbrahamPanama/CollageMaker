@@ -10,6 +10,8 @@ export type ExportSettings = {
   height: number;
   transparent: boolean;
   preventPureWhite: boolean;
+  /** Drop the cut/outline overlay from the export (used by flipbook TIFF sheets). */
+  noOutline: boolean;
 };
 
 type FixedExportSize = {
@@ -63,6 +65,8 @@ type Props = {
   fixedSize?: FixedExportSize;
   preferredFormat?: ExportFormat;
   formats?: ExportFormat[];
+  /** Show a "remove cut outline" toggle for TIFF exports (flipbook print sheets). */
+  showNoOutline?: boolean;
   title?: string;
   description?: string;
 };
@@ -81,6 +85,7 @@ export function ExportModal({
   fixedSize,
   preferredFormat,
   formats,
+  showNoOutline = false,
   title = 'Export collage',
   description = 'Choose a format and resolution for the current canvas.',
 }: Props) {
@@ -89,6 +94,7 @@ export function ExportModal({
   const [customW, setCustomW] = useState(2400);
   const [customH, setCustomH] = useState(2400);
   const [transparent, setTransparent] = useState(false);
+  const [noOutline, setNoOutline] = useState(false);
   const [exportPreferences, setExportPreferences] = useState(loadExportPreferences);
 
   const formatOptions = useMemo(() => {
@@ -130,16 +136,19 @@ export function ExportModal({
     saveExportPreferences(exportPreferences);
   }, [exportPreferences]);
 
+  // Choose the initial format when the dialog opens (or when the allowed set
+  // changes). `format` is intentionally NOT a dependency: re-running on every
+  // format change would force `preferredFormat` back and lock the picker.
   useEffect(() => {
     if (!open) return;
     if (preferredFormat && formatOptions.some((item) => item.id === preferredFormat)) {
       setFormat(preferredFormat);
       return;
     }
-    if (!formatOptions.some((item) => item.id === format) && formatOptions[0]) {
-      setFormat(formatOptions[0].id);
-    }
-  }, [format, formatOptions, open, preferredFormat]);
+    setFormat((current) =>
+      formatOptions.some((item) => item.id === current) ? current : formatOptions[0]?.id ?? current
+    );
+  }, [formatOptions, open, preferredFormat]);
 
   const estMb = useMemo(() => {
     if (activeFormat === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
@@ -282,6 +291,14 @@ export function ExportModal({
                 setExportPreferences((prev) => ({ ...prev, preventPureWhite: value }))
               }
             />
+            {showNoOutline && activeFormat === 'tiff' && (
+              <ExportToggle
+                label="Remove cut outline"
+                hint="Clean artwork — keeps bleed and labels"
+                checked={noOutline}
+                onChange={setNoOutline}
+              />
+            )}
 
             <h4>Preview</h4>
             <div className="cm-preview-card">
@@ -336,6 +353,7 @@ export function ExportModal({
                   height: h,
                   transparent: finalTransparent,
                   preventPureWhite,
+                  noOutline,
                 });
               }}
             >

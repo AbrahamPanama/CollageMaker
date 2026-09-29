@@ -169,6 +169,38 @@ export async function downloadExport(opts: DownloadExportOptions): Promise<boole
 
 // ---------- Save helpers ----------
 
+/**
+ * Save arbitrary binary bytes (e.g. a .zip bundle) with the same native-dialog /
+ * browser-download behaviour as the format exporters, but without the
+ * `ExportFormat` constraint. The file extension is taken from `filename`.
+ */
+export async function saveBinaryArtifact(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string
+): Promise<boolean> {
+  if (isTauri()) {
+    const [{ save }, { writeFile }] = await Promise.all([
+      import('@tauri-apps/plugin-dialog'),
+      import('@tauri-apps/plugin-fs'),
+    ]);
+    const ext = (filename.split('.').pop() ?? 'bin').toLowerCase();
+    const selectedPath = await save({
+      title: 'Export',
+      defaultPath: filename,
+      canCreateDirectories: true,
+      filters: [{ name: `${ext.toUpperCase()} file`, extensions: [ext] }],
+    });
+    if (!selectedPath) return false;
+    const finalPath = /\.[^./\\]+$/.test(selectedPath) ? selectedPath : `${selectedPath}.${ext}`;
+    await writeFile(finalPath, bytes);
+    return true;
+  }
+
+  downloadBlob(bytes, mime, filename);
+  return true;
+}
+
 async function saveExportPayload(payload: ExportPayload): Promise<boolean> {
   if (isTauri()) {
     const [{ save }, { writeFile }] = await Promise.all([
@@ -273,7 +305,7 @@ type TiffEntry = {
   valueBytes?: Uint8Array;
 };
 
-function encodeRgbaTiff(imageData: ImageData, dpi: number): Uint8Array {
+export function encodeRgbaTiff(imageData: ImageData, dpi: number): Uint8Array {
   const { width, height, data } = imageData;
   const pixelBytes = new Uint8Array(data.length);
   pixelBytes.set(data);

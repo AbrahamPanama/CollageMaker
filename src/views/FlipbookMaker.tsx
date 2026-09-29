@@ -11,7 +11,7 @@ import {
   FLIPBOOK_BLADE_VIEWBOX,
   getFlipbookBladeBleedSvgPath,
 } from '../flipbook/blade';
-import { saveFlipbookPdf } from '../flipbook/export';
+import { saveFlipbookPdf, saveFlipbookTiffSheets } from '../flipbook/export';
 import {
   buildFlipbookBlades,
   buildPrintPages,
@@ -36,8 +36,11 @@ const MAX_FRAMES = 32;
 const DEFAULT_BLEED_MM = 1;
 const MAX_BLEED_MM = 2;
 const PRINT_MARGIN_MM = 2;
-const PRINT_GAP_MM = 1;
 const MM_PER_INCH = 25.4;
+// Minimum separation between blades on the print sheet: 1.5 inches horizontally,
+// 0.5 inch vertically. Fewer blades fit per page than with a hairline gap.
+const PRINT_GAP_X_MM = MM_PER_INCH * 1.5;
+const PRINT_GAP_Y_MM = MM_PER_INCH / 2;
 const MIN_PAGE_MM = 25;
 const MAX_PAGE_MM = 1200;
 const PRINT_DPI = 300;
@@ -72,7 +75,8 @@ type PrintLayout = {
   bladesPerPage: number;
   slotWidthMm: number;
   slotHeightMm: number;
-  gapMm: number;
+  gapXMm: number;
+  gapYMm: number;
   marginMm: number;
 };
 
@@ -364,8 +368,8 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
   };
 
   const handleExport = async (settings: ExportSettings) => {
-    if (settings.format !== 'pdf') {
-      alert('Flipbook export currently produces print-ready PDF files.');
+    if (settings.format !== 'pdf' && settings.format !== 'tiff') {
+      alert('Flipbook export produces a print-ready PDF or TIFF sheets.');
       return;
     }
     if (videoProgress || (isVideoMode && photos.length !== frameCount)) {
@@ -374,7 +378,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
     }
     setExporting(true);
     try {
-      const saved = await saveFlipbookPdf({
+      const common = {
         frames,
         printPages,
         pageWidthMm,
@@ -387,7 +391,15 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         preventPureWhite: settings.preventPureWhite,
         dpi: PRINT_DPI,
         baseName: `flipbook-print-${Date.now()}`,
-      });
+      };
+      const saved =
+        settings.format === 'tiff'
+          ? await saveFlipbookTiffSheets({
+              ...common,
+              background: settings.transparent ? 'transparent' : 'white',
+              drawOutline: !settings.noOutline,
+            })
+          : await saveFlipbookPdf(common);
       if (saved) onExportRequest(false);
     } catch (error) {
       console.error('Flipbook export failed', error);
@@ -852,7 +864,7 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         previewLabel="Flipbook print"
         bgColor="#ffffff"
         aspectRatio={pageWidthMm / pageHeightMm}
-        allowTransparency={false}
+        allowTransparency={true}
         previewContent={
           <FlipbookExportPreview
             page={printPages[0]}
@@ -866,11 +878,12 @@ export function FlipbookMaker({ onPhotoCountChange, onExportRequest, exportOpen 
         fixedSize={{
           width: Math.round((pageWidthMm / MM_PER_INCH) * PRINT_DPI),
           height: Math.round((pageHeightMm / MM_PER_INCH) * PRINT_DPI),
-          label: `${formatPageSize(pageWidthMm, pageHeightMm, pageUnit)} PDF`,
-          note: `${printPages.length * 2} pages · ${PRINT_DPI} dpi raster fills · vector cut contours${exporting ? ' · exporting...' : ''}`,
+          label: formatPageSize(pageWidthMm, pageHeightMm, pageUnit),
+          note: `${printPages.length * 2} sheets · ${PRINT_DPI} dpi · PDF (one file) or TIFF (zip of sheets)${exporting ? ' · exporting...' : ''}`,
         }}
         preferredFormat="pdf"
-        formats={['pdf']}
+        formats={['pdf', 'tiff']}
+        showNoOutline
         title="Export flipbook"
         description="Create a print-ready duplex PDF using the current media size, bleed, and blade layout."
       />
@@ -1405,8 +1418,8 @@ function computePrintLayout(pageWidthMm: number, pageHeightMm: number, bleedMm: 
   const slotHeightMm = BLADE_VIEWBOX.h + bleed * 2;
   const usableWidthMm = Math.max(slotWidthMm, pageWidthMm - PRINT_MARGIN_MM * 2);
   const usableHeightMm = Math.max(slotHeightMm, pageHeightMm - PRINT_MARGIN_MM * 2);
-  const columns = Math.max(1, Math.floor((usableWidthMm + PRINT_GAP_MM) / (slotWidthMm + PRINT_GAP_MM)));
-  const rows = Math.max(1, Math.floor((usableHeightMm + PRINT_GAP_MM) / (slotHeightMm + PRINT_GAP_MM)));
+  const columns = Math.max(1, Math.floor((usableWidthMm + PRINT_GAP_X_MM) / (slotWidthMm + PRINT_GAP_X_MM)));
+  const rows = Math.max(1, Math.floor((usableHeightMm + PRINT_GAP_Y_MM) / (slotHeightMm + PRINT_GAP_Y_MM)));
 
   return {
     columns,
@@ -1414,7 +1427,8 @@ function computePrintLayout(pageWidthMm: number, pageHeightMm: number, bleedMm: 
     bladesPerPage: columns * rows,
     slotWidthMm,
     slotHeightMm,
-    gapMm: PRINT_GAP_MM,
+    gapXMm: PRINT_GAP_X_MM,
+    gapYMm: PRINT_GAP_Y_MM,
     marginMm: PRINT_MARGIN_MM,
   };
 }
@@ -1427,12 +1441,12 @@ function getPrintSlotStyle(
 ): CSSProperties {
   const row = Math.floor(slot / layout.columns);
   const col = slot % layout.columns;
-  const totalWidthMm = layout.columns * layout.slotWidthMm + (layout.columns - 1) * layout.gapMm;
-  const totalHeightMm = layout.rows * layout.slotHeightMm + (layout.rows - 1) * layout.gapMm;
+  const totalWidthMm = layout.columns * layout.slotWidthMm + (layout.columns - 1) * layout.gapXMm;
+  const totalHeightMm = layout.rows * layout.slotHeightMm + (layout.rows - 1) * layout.gapYMm;
   const originXMm = (pageWidthMm - totalWidthMm) / 2;
   const originYMm = (pageHeightMm - totalHeightMm) / 2;
-  const leftMm = originXMm + col * (layout.slotWidthMm + layout.gapMm);
-  const topMm = originYMm + row * (layout.slotHeightMm + layout.gapMm);
+  const leftMm = originXMm + col * (layout.slotWidthMm + layout.gapXMm);
+  const topMm = originYMm + row * (layout.slotHeightMm + layout.gapYMm);
 
   return {
     left: `${(leftMm / pageWidthMm) * 100}%`,

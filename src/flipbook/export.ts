@@ -1,5 +1,10 @@
 import type { jsPDF as JsPdf } from 'jspdf';
-import { preventPureWhiteInImageData, saveExportBytes } from '../export';
+import {
+  encodeRgbaTiff,
+  preventPureWhiteInImageData,
+  saveBinaryArtifact,
+  saveExportBytes,
+} from '../export';
 import { computePhotoPlacement } from '../photoFraming';
 import type { Photo } from '../types';
 import {
@@ -27,7 +32,8 @@ export type FlipbookExportLayout = {
   bladesPerPage: number;
   slotWidthMm: number;
   slotHeightMm: number;
-  gapMm: number;
+  gapXMm: number;
+  gapYMm: number;
   marginMm: number;
 };
 
@@ -54,6 +60,151 @@ type SlotGeometry = {
 };
 
 type ImageCache = Map<string, Promise<HTMLImageElement>>;
+
+export type FlipbookTiffBackground = 'transparent' | 'white';
+
+export type SaveFlipbookTiffOptions = Omit<SaveFlipbookPdfOptions, 'baseName'> & {
+  baseName: string;
+  /** 'white' = pure #FFFFFF page fill (a RIP knockout); 'transparent' = no page fill. */
+  background: FlipbookTiffBackground;
+  /** Draw the raster cut contour around each blade. False = clean artwork (bleed + labels kept). */
+  drawOutline: boolean;
+};
+
+/**
+ * Export the flipbook print sheets as TIFF (one file per page side), bundled in a
+ * ZIP. Background fill is applied at the sheet level so a pure-white page stays
+ * #FFFFFF (RIP transparency) while artwork pure-white is still bumped to #FEFEFE
+ * by `preventPureWhite` per blade — the white background never gets bumped.
+ */
+export async function saveFlipbookTiffSheets(options: SaveFlipbookTiffOptions): Promise<boolean> {
+  const dpi = options.dpi ?? FALLBACK_DPI;
+  const imageCache: ImageCache = new Map();
+  const files: Record<string, Uint8Array> = {};
+
+  let pageNumber = 0;
+  for (const page of options.printPages) {
+    pageNumber += 1;
+    for (const side of ['front', 'back'] as BladeSide[]) {
+      const canvas = await renderFlipbookSheetCanvas({ options, page, side, dpi, imageCache });
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('Canvas is not available');
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const name = `${options.baseName}-sheet${String(pageNumber).padStart(2, '0')}-${side}.tiff`;
+      files[name] = encodeRgbaTiff(imageData, dpi);
+    }
+  }
+
+  const { zipSync } = await import('fflate');
+  const zipBytes = zipSync(files, { level: 6 });
+  return saveBinaryArtifact(zipBytes, `${options.baseName}.zip`, 'application/zip');
+}
+
+async function renderFlipbookSheetCanvas({
+  options,
+  page,
+  side,
+  dpi,
+  imageCache,
+}: {
+  options: SaveFlipbookTiffOptions;
+  page: PrintPage<FlipbookBlade>;
+  side: BladeSide;
+  dpi: number;
+  imageCache: ImageCache;
+}): Promise<HTMLCanvasElement> {
+  const pxPerMm = dpi / MM_PER_INCH;
+  const pxW = Math.max(1, Math.round(options.pageWidthMm * pxPerMm));
+  const pxH = Math.max(1, Math.round(options.pageHeightMm * pxPerMm));
+  const canvas = document.createElement('canvas');
+  canvas.width = pxW;
+  canvas.height = pxH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: Boolean(options.preventPureWhite) });
+  if (!ctx) throw new Error('Canvas is not available');
+
+  if (options.background === 'white') {
+    // Pure #FFFFFF, intentionally NOT routed through preventPureWhite so the RIP
+    // treats the page as a knockout/transparency. Artwork whites are protected
+    // inside each blade raster instead.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, pxW, pxH);
+  }
+
+  const slots = side === 'front' ? page.frontSlots : page.backSlots;
+  const pageLayout = {
+    ...options.printLayout,
+    rows: Math.max(1, Math.ceil(slots.length / options.printLayout.columns)),
+  };
+
+  for (const slot of slots) {
+    if (!slot.item) continue;
+    const frameIndex = side === 'front' ? slot.item.frontFrame : slot.item.backFrame;
+    const half: BladeHalf = side === 'front' ? 'A' : 'D';
+    const frame = options.frames[frameIndex];
+    const geometry = getPrintSlotGeometry(slot.slot, options.pageWidthMm, options.pageHeightMm, pageLayout);
+    const bladeCanvas = await renderBladeCanvas({
+      frame,
+      blade: slot.item,
+      half,
+      side,
+      bleedMm: options.bleedMm,
+      autoFrame: options.autoFrame,
+      closeUpTightness: options.closeUpTightness,
+      mirrorArtworkX: side === 'back' && Boolean(options.mirrorBackArtworkX),
+      preventPureWhite: Boolean(options.preventPureWhite),
+      dpi,
+      imageCache,
+    });
+
+    ctx.drawImage(
+      bladeCanvas,
+      geometry.x * pxPerMm,
+      geometry.y * pxPerMm,
+      geometry.w * pxPerMm,
+      geometry.h * pxPerMm
+    );
+
+    if (options.drawOutline) {
+      drawBladeContourRaster(ctx, pxPerMm, geometry.x + options.bleedMm, geometry.y + options.bleedMm);
+    }
+  }
+
+  return canvas;
+}
+
+function drawBladeContourRaster(
+  ctx: CanvasRenderingContext2D,
+  pxPerMm: number,
+  trimXmm: number,
+  trimYmm: number
+) {
+  const path = new Path2D();
+  for (const command of bladeContourCommands) {
+    if (command.type === 'M') {
+      path.moveTo((trimXmm + command.points[0]) * pxPerMm, (trimYmm + command.points[1]) * pxPerMm);
+    } else if (command.type === 'L') {
+      path.lineTo((trimXmm + command.points[0]) * pxPerMm, (trimYmm + command.points[1]) * pxPerMm);
+    } else if (command.type === 'C') {
+      path.bezierCurveTo(
+        (trimXmm + command.points[0]) * pxPerMm,
+        (trimYmm + command.points[1]) * pxPerMm,
+        (trimXmm + command.points[2]) * pxPerMm,
+        (trimYmm + command.points[3]) * pxPerMm,
+        (trimXmm + command.points[4]) * pxPerMm,
+        (trimYmm + command.points[5]) * pxPerMm
+      );
+    } else {
+      path.closePath();
+    }
+  }
+  ctx.save();
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = CUT_STROKE_MM * pxPerMm;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke(path);
+  ctx.restore();
+}
 
 export async function saveFlipbookPdf(options: SaveFlipbookPdfOptions): Promise<boolean> {
   const { default: jsPDF } = await import('jspdf');
@@ -111,7 +262,7 @@ async function renderPdfPage(
     const half: BladeHalf = side === 'front' ? 'A' : 'D';
     const frame = options.frames[frameIndex];
     const geometry = getPrintSlotGeometry(slot.slot, options.pageWidthMm, options.pageHeightMm, pageLayout);
-    const image = await renderBladeRaster({
+    const bladeCanvas = await renderBladeCanvas({
       frame,
       blade: slot.item,
       half,
@@ -125,7 +276,7 @@ async function renderPdfPage(
       imageCache,
     });
 
-    pdf.addImage(image, 'PNG', geometry.x, geometry.y, geometry.w, geometry.h, undefined, 'FAST');
+    pdf.addImage(bladeCanvas.toDataURL('image/png'), 'PNG', geometry.x, geometry.y, geometry.w, geometry.h, undefined, 'FAST');
     drawBladeContour(pdf, geometry.x + options.bleedMm, geometry.y + options.bleedMm);
   }
 }
@@ -138,20 +289,20 @@ function getPrintSlotGeometry(
 ): SlotGeometry {
   const row = Math.floor(slot / layout.columns);
   const col = slot % layout.columns;
-  const totalWidthMm = layout.columns * layout.slotWidthMm + (layout.columns - 1) * layout.gapMm;
-  const totalHeightMm = layout.rows * layout.slotHeightMm + (layout.rows - 1) * layout.gapMm;
+  const totalWidthMm = layout.columns * layout.slotWidthMm + (layout.columns - 1) * layout.gapXMm;
+  const totalHeightMm = layout.rows * layout.slotHeightMm + (layout.rows - 1) * layout.gapYMm;
   const originXMm = (pageWidthMm - totalWidthMm) / 2;
   const originYMm = (pageHeightMm - totalHeightMm) / 2;
 
   return {
-    x: originXMm + col * (layout.slotWidthMm + layout.gapMm),
-    y: originYMm + row * (layout.slotHeightMm + layout.gapMm),
+    x: originXMm + col * (layout.slotWidthMm + layout.gapXMm),
+    y: originYMm + row * (layout.slotHeightMm + layout.gapYMm),
     w: layout.slotWidthMm,
     h: layout.slotHeightMm,
   };
 }
 
-async function renderBladeRaster({
+async function renderBladeCanvas({
   frame,
   blade,
   half,
@@ -243,7 +394,7 @@ async function renderBladeRaster({
     }
   }
 
-  return canvas.toDataURL('image/png');
+  return canvas;
 }
 
 function applyArtworkTransform(
