@@ -15,8 +15,8 @@ import {
   findAutoParamsForCount,
   generateCells,
 } from '../shapeCollage';
-import type { ManualFrame, Photo } from '../types';
-import { detectSubject } from '../smartFrame';
+import type { EchoFill, ManualFrame, Photo } from '../types';
+import { detectPhotoSubjects } from '../smartFrame';
 
 import { computeCellContour, contourLoopsToSvgPath } from '../contour';
 import { ShapeStage } from '../components/ShapeStage';
@@ -194,7 +194,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const src = await readFileAsDataURL(file);
     const img = await loadImage(src);
     if (!img) return null;
-    const subject = await detectSubject(img);
+    const detection = await detectPhotoSubjects(img);
     return {
       id:
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -203,7 +203,8 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
       src,
       naturalWidth: img.naturalWidth,
       naturalHeight: img.naturalHeight,
-      subject,
+      subject: detection.subject,
+      detections: detection.detections,
     };
   };
 
@@ -292,6 +293,12 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     );
   };
 
+  const handleSaveEcho = (photoId: string, echo: EchoFill | undefined) => {
+    setPhotos((prev) =>
+      prev.map((photo) => (photo.id === photoId ? { ...photo, echo } : photo))
+    );
+  };
+
   const handleResetManualFrame = (photoId: string) => {
     setPhotos((prev) =>
       prev.map((photo) => {
@@ -311,11 +318,17 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         const p = photos[i];
         const img = await loadImage(p.src);
         if (img) {
-          const subject = await detectSubject(img);
+          const detection = await detectPhotoSubjects(img);
           setPhotos((prev) => {
             const next = prev.slice();
             const idx = next.findIndex((x) => x.id === p.id);
-            if (idx >= 0) next[idx] = { ...next[idx], subject };
+            if (idx >= 0) {
+              next[idx] = {
+                ...next[idx],
+                subject: detection.subject,
+                detections: detection.detections,
+              };
+            }
             return next;
           });
         }
@@ -338,7 +351,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const prevContourShow = settings.contourShow;
     // Transparency: format must support it; modal toggle picks it explicitly.
     const formatSupportsAlpha =
-      es.format === 'png' || es.format === 'svg' || es.format === 'pdf';
+      es.format === 'png' || es.format === 'tiff' || es.format === 'svg' || es.format === 'pdf';
     const wantTransparent = es.transparent && formatSupportsAlpha;
     const prevBgTransparent = settings.bgTransparent;
     // Temporarily reset zoom so toDataURL renders at the export resolution
@@ -346,6 +359,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const prevZoom = zoom;
 
     const mime = es.format === 'jpg' ? 'image/jpeg' : 'image/png';
+    const captureMime = es.preventPureWhite ? 'image/png' : mime;
     let dataUrl: string;
 
     try {
@@ -367,9 +381,9 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
       }
 
       dataUrl = stage.toDataURL({
-        mimeType: mime,
+        mimeType: captureMime,
         pixelRatio: es.width / STAGE_DIM,
-        quality: es.format === 'jpg' ? 0.92 : 1,
+        quality: captureMime === 'image/jpeg' ? 0.92 : 1,
       });
     } catch (e) {
       console.error('Export failed', e);
@@ -390,43 +404,49 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
     const hasVectorContour =
       renderContourAsVector && prevContourShow && contour.loops.length > 0;
 
-    await downloadExport({
-      format: es.format,
-      dataUrl,
-      mime,
-      width: es.width,
-      height: es.height,
-      baseName: `collage-${Date.now()}`,
-      hooks: hasVectorContour
-        ? {
-            svgExtras: `<path d="${contourLoopsToSvgPath(
-              contour.loops,
-              sx,
-              sy
-            )}" fill="none" stroke="${settings.contourColor}" stroke-width="${
-              settings.contourThickness * contourStrokeScale
-            }" stroke-linejoin="miter" stroke-linecap="butt"/>`,
-            pdfOverlay: (pdf) => {
-              const rgb = hexToRgb(settings.contourColor);
-              pdf.setDrawColor(rgb.r, rgb.g, rgb.b);
-              pdf.setLineWidth(settings.contourThickness * contourStrokeScale);
-              pdf.setLineJoin('miter');
-              pdf.setLineCap('butt');
-              for (const loop of contour.loops) {
-                if (loop.length === 0) continue;
-                pdf.moveTo(loop[0].x * sx, loop[0].y * sy);
-                for (let i = 1; i < loop.length; i++) {
-                  pdf.lineTo(loop[i].x * sx, loop[i].y * sy);
+    try {
+      const saved = await downloadExport({
+        format: es.format,
+        dataUrl,
+        mime,
+        width: es.width,
+        height: es.height,
+        baseName: `collage-${Date.now()}`,
+        preventPureWhite: es.preventPureWhite,
+        hooks: hasVectorContour
+          ? {
+              svgExtras: `<path d="${contourLoopsToSvgPath(
+                contour.loops,
+                sx,
+                sy
+              )}" fill="none" stroke="${settings.contourColor}" stroke-width="${
+                settings.contourThickness * contourStrokeScale
+              }" stroke-linejoin="miter" stroke-linecap="butt"/>`,
+              pdfOverlay: (pdf) => {
+                const rgb = hexToRgb(settings.contourColor);
+                pdf.setDrawColor(rgb.r, rgb.g, rgb.b);
+                pdf.setLineWidth(settings.contourThickness * contourStrokeScale);
+                pdf.setLineJoin('miter');
+                pdf.setLineCap('butt');
+                for (const loop of contour.loops) {
+                  if (loop.length === 0) continue;
+                  pdf.moveTo(loop[0].x * sx, loop[0].y * sy);
+                  for (let i = 1; i < loop.length; i++) {
+                    pdf.lineTo(loop[i].x * sx, loop[i].y * sy);
+                  }
+                  pdf.close();
+                  pdf.stroke();
                 }
-                pdf.close();
-                pdf.stroke();
-              }
-            },
-          }
-        : undefined,
-    });
+              },
+            }
+          : undefined,
+      });
 
-    onExportRequest(false);
+      if (saved) onExportRequest(false);
+    } catch (e) {
+      console.error('Save failed', e);
+      alert('Save failed. Please pick a different file name or location.');
+    }
   };
 
   // ---------- Stage bar info ----------
@@ -728,6 +748,7 @@ export function ShapeCollage({ onExportRequest, exportOpen, onPhotoCountChange }
         onClose={() => setEditingPhotoId(null)}
         onSave={handleSaveManualFrame}
         onReset={handleResetManualFrame}
+        onEchoChange={handleSaveEcho}
       />
     </main>
   );

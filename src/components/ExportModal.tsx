@@ -1,12 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { pickLegibleText } from '../export';
+import { loadExportPreferences, saveExportPreferences } from '../settingsStore';
 
-export type ExportFormat = 'png' | 'jpg' | 'pdf' | 'svg';
+export type ExportFormat = 'png' | 'jpg' | 'tiff' | 'pdf' | 'svg';
 export type ExportSettings = {
   format: ExportFormat;
   width: number;
   height: number;
   transparent: boolean;
+  preventPureWhite: boolean;
+  /** Drop the cut/outline overlay from the export (used by flipbook TIFF sheets). */
+  noOutline: boolean;
+};
+
+type FixedExportSize = {
+  width: number;
+  height: number;
+  label: string;
+  note: string;
 };
 
 type ResPreset = {
@@ -27,8 +39,9 @@ const RES_PRESETS: ResPreset[] = [
 const FORMATS: Array<{ id: ExportFormat; label: string; desc: string }> = [
   { id: 'png', label: 'PNG', desc: 'Lossless · supports transparency' },
   { id: 'jpg', label: 'JPG', desc: 'Smaller · solid background only'  },
-  { id: 'pdf', label: 'PDF', desc: 'Printable document'               },
-  { id: 'svg', label: 'SVG', desc: 'Raster image in an SVG wrapper'    },
+  { id: 'tiff', label: 'TIFF', desc: 'Print raster · supports transparency' },
+  { id: 'pdf', label: 'PDF', desc: 'Printable · vector guides when available' },
+  { id: 'svg', label: 'SVG', desc: 'Raster collage + vector guides'           },
 ];
 
 const MAX_EXPORT_DIM = 7200;
@@ -44,9 +57,18 @@ type Props = {
   previewLabel: string;
   /** Live thumbnail of the collage, captured transparent (cells + contour, no bg). */
   previewSrc?: string | null;
+  previewContent?: ReactNode;
   bgColor: string;
   aspectRatio?: number;
   allowTransparency?: boolean;
+  initialTransparent?: boolean;
+  fixedSize?: FixedExportSize;
+  preferredFormat?: ExportFormat;
+  formats?: ExportFormat[];
+  /** Show a "remove cut outline" toggle for TIFF exports (flipbook print sheets). */
+  showNoOutline?: boolean;
+  title?: string;
+  description?: string;
 };
 
 export function ExportModal({
@@ -55,27 +77,46 @@ export function ExportModal({
   onExport,
   previewLabel,
   previewSrc,
+  previewContent,
   bgColor,
   aspectRatio = 1,
   allowTransparency = true,
+  initialTransparent = false,
+  fixedSize,
+  preferredFormat,
+  formats,
+  showNoOutline = false,
+  title = 'Export collage',
+  description = 'Choose a format and resolution for the current canvas.',
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [presetId, setPresetId] = useState<string>('hd');
   const [customW, setCustomW] = useState(2400);
   const [customH, setCustomH] = useState(2400);
   const [transparent, setTransparent] = useState(false);
+  const [noOutline, setNoOutline] = useState(false);
+  const [exportPreferences, setExportPreferences] = useState(loadExportPreferences);
 
+  const formatOptions = useMemo(() => {
+    const allowed = formats && formats.length > 0 ? formats : FORMATS.map((item) => item.id);
+    return FORMATS.filter((item) => allowed.includes(item.id));
+  }, [formats]);
+  const activeFormat = formatOptions.some((item) => item.id === format)
+    ? format
+    : formatOptions[0]?.id ?? 'png';
   const preset = RES_PRESETS.find((p) => p.id === presetId)!;
   const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
   const presetDims = fitPresetToAspect(preset.w, safeAspect);
-  const w = presetId === 'custom' ? customW : presetDims.w;
-  const h = presetId === 'custom' ? customH : presetDims.h;
+  const w = fixedSize ? fixedSize.width : presetId === 'custom' ? customW : presetDims.w;
+  const h = fixedSize ? fixedSize.height : presetId === 'custom' ? customH : presetDims.h;
   const transparentAvailable =
-    allowTransparency && (format === 'png' || format === 'svg' || format === 'pdf');
+    allowTransparency &&
+    (activeFormat === 'png' || activeFormat === 'tiff' || activeFormat === 'svg' || activeFormat === 'pdf');
   const finalTransparent = transparent && transparentAvailable;
+  const preventPureWhite = exportPreferences.preventPureWhite;
   // With both sides clamped to MAX_EXPORT_DIM, the product is bounded too,
   // so a separate pixel-area check would be redundant.
-  const canExport = w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM;
+  const canExport = fixedSize ? w > 0 && h > 0 : w > 0 && h > 0 && w <= MAX_EXPORT_DIM && h <= MAX_EXPORT_DIM;
 
   // When the parent's aspect ratio changes (e.g. the user switched grid
   // layout), recompute the custom height while preserving the user's current
@@ -87,12 +128,35 @@ export function ExportModal({
     setCustomH(Math.max(1, Math.round(customWRef.current / safeAspect)));
   }, [safeAspect]);
 
+  useEffect(() => {
+    if (open) setTransparent(initialTransparent);
+  }, [initialTransparent, open]);
+
+  useEffect(() => {
+    saveExportPreferences(exportPreferences);
+  }, [exportPreferences]);
+
+  // Choose the initial format when the dialog opens (or when the allowed set
+  // changes). `format` is intentionally NOT a dependency: re-running on every
+  // format change would force `preferredFormat` back and lock the picker.
+  useEffect(() => {
+    if (!open) return;
+    if (preferredFormat && formatOptions.some((item) => item.id === preferredFormat)) {
+      setFormat(preferredFormat);
+      return;
+    }
+    setFormat((current) =>
+      formatOptions.some((item) => item.id === current) ? current : formatOptions[0]?.id ?? current
+    );
+  }, [formatOptions, open, preferredFormat]);
+
   const estMb = useMemo(() => {
-    if (format === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
-    if (format === 'png') return (w * h * 0.0000016 * 1.2).toFixed(1);
-    if (format === 'pdf') return (w * h * 0.0000018 * 1.3).toFixed(1);
+    if (activeFormat === 'jpg') return (w * h * 0.0000005 * 1.5).toFixed(1);
+    if (activeFormat === 'png') return (w * h * 0.0000016 * 1.2).toFixed(1);
+    if (activeFormat === 'tiff') return (w * h * 4 * 0.000001).toFixed(1);
+    if (activeFormat === 'pdf') return (w * h * 0.0000018 * 1.3).toFixed(1);
     return (w * h * 0.0000004).toFixed(2);
-  }, [format, w, h]);
+  }, [activeFormat, w, h]);
 
   if (!open) return null;
 
@@ -101,8 +165,8 @@ export function ExportModal({
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="cm-modal-head">
           <div>
-            <h2>Export collage</h2>
-            <p>Choose a format and resolution for the current canvas.</p>
+            <h2>{title}</h2>
+            <p>{description}</p>
           </div>
           <button className="cm-icon-btn" onClick={onClose} aria-label="Close">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -115,10 +179,10 @@ export function ExportModal({
           <div className="cm-modal-col">
             <h4>Format</h4>
             <div className="cm-format-list">
-              {FORMATS.map((f) => (
+              {formatOptions.map((f) => (
                 <button
                   key={f.id}
-                  className={`cm-format-row ${format === f.id ? 'is-active' : ''}`}
+                  className={`cm-format-row ${activeFormat === f.id ? 'is-active' : ''}`}
                   onClick={() => setFormat(f.id)}
                 >
                   <span className="cm-format-mark">{f.label}</span>
@@ -128,30 +192,42 @@ export function ExportModal({
               ))}
             </div>
 
-            <h4>Resolution</h4>
-            <div className="cm-res-grid">
-              {RES_PRESETS.map((r) => (
-                <button
-                  key={r.id}
-                  className={`cm-res-tile ${presetId === r.id ? 'is-active' : ''}`}
-                  onClick={() => setPresetId(r.id)}
-                >
-                  <span className="cm-res-label">{r.label}</span>
-                  {r.id !== 'custom' ? (
-                    <span className="cm-res-dim">
-                      {fitPresetToAspect(r.w, safeAspect).w}
-                      <span>×</span>
-                      {fitPresetToAspect(r.w, safeAspect).h}
-                    </span>
-                  ) : (
-                    <span className="cm-res-dim cm-res-dim-custom">— × —</span>
-                  )}
-                  <span className="cm-res-note">{r.note}</span>
-                </button>
-              ))}
-            </div>
+            {fixedSize ? (
+              <>
+                <h4>Print Output</h4>
+                <div className="cm-fixed-export">
+                  <span>{fixedSize.label}</span>
+                  <small>{fixedSize.note}</small>
+                </div>
+              </>
+            ) : (
+              <>
+                <h4>Resolution</h4>
+                <div className="cm-res-grid">
+                  {RES_PRESETS.map((r) => (
+                    <button
+                      key={r.id}
+                      className={`cm-res-tile ${presetId === r.id ? 'is-active' : ''}`}
+                      onClick={() => setPresetId(r.id)}
+                    >
+                      <span className="cm-res-label">{r.label}</span>
+                      {r.id !== 'custom' ? (
+                        <span className="cm-res-dim">
+                          {fitPresetToAspect(r.w, safeAspect).w}
+                          <span>×</span>
+                          {fitPresetToAspect(r.w, safeAspect).h}
+                        </span>
+                      ) : (
+                        <span className="cm-res-dim cm-res-dim-custom">— × —</span>
+                      )}
+                      <span className="cm-res-note">{r.note}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
-            {presetId === 'custom' && (
+            {!fixedSize && presetId === 'custom' && (
               <div className="cm-custom-dims">
                 <label>
                   <span>Width</span>
@@ -200,18 +276,34 @@ export function ExportModal({
                 transparentAvailable
                   ? 'Background fill is omitted'
                   : allowTransparency
-                  ? `Not available for ${format.toUpperCase()}`
+                  ? `Not available for ${activeFormat.toUpperCase()}`
                   : 'This canvas exports with its background'
               }
               checked={finalTransparent}
               disabled={!transparentAvailable}
               onChange={setTransparent}
             />
+            <ExportToggle
+              label="Prevent pure white"
+              hint="Exports #FFFFFF as #FEFEFE for UV RIPs"
+              checked={preventPureWhite}
+              onChange={(value) =>
+                setExportPreferences((prev) => ({ ...prev, preventPureWhite: value }))
+              }
+            />
+            {showNoOutline && activeFormat === 'tiff' && (
+              <ExportToggle
+                label="Remove cut outline"
+                hint="Clean artwork — keeps bleed and labels"
+                checked={noOutline}
+                onChange={setNoOutline}
+              />
+            )}
 
             <h4>Preview</h4>
             <div className="cm-preview-card">
               <div
-                className="cm-preview-img"
+                className={`cm-preview-img ${previewContent ? 'is-custom' : ''}`}
                 style={{
                   aspectRatio: String(safeAspect),
                   backgroundColor: finalTransparent ? 'transparent' : bgColor,
@@ -220,7 +312,9 @@ export function ExportModal({
                   backgroundPosition: '0 0, 0 7px, 7px -7px, -7px 0',
                 }}
               >
-                {previewSrc ? (
+                {previewContent ? (
+                  previewContent
+                ) : previewSrc ? (
                   <img className="cm-preview-thumb" src={previewSrc} alt="Collage preview" />
                 ) : (
                   <span style={{ color: finalTransparent ? '#aaa' : pickLegibleText(bgColor) }}>
@@ -229,8 +323,8 @@ export function ExportModal({
                 )}
               </div>
               <dl className="cm-preview-meta">
-                <div><dt>Format</dt><dd>{format.toUpperCase()}</dd></div>
-                <div><dt>Pixels</dt><dd>{w.toLocaleString()} × {h.toLocaleString()}</dd></div>
+                <div><dt>Format</dt><dd>{activeFormat.toUpperCase()}</dd></div>
+                <div><dt>{fixedSize ? 'Output' : 'Pixels'}</dt><dd>{fixedSize ? fixedSize.label : `${w.toLocaleString()} × ${h.toLocaleString()}`}</dd></div>
                 <div><dt>Bg</dt><dd>{finalTransparent ? 'transparent' : bgColor}</dd></div>
                 <div><dt>Est. size</dt><dd>~{estMb} MB</dd></div>
               </dl>
@@ -254,14 +348,16 @@ export function ExportModal({
               disabled={!canExport}
               onClick={() => {
                 onExport({
-                  format,
+                  format: activeFormat,
                   width: w,
                   height: h,
                   transparent: finalTransparent,
+                  preventPureWhite,
+                  noOutline,
                 });
               }}
             >
-              Export {format.toUpperCase()}
+              Export {activeFormat.toUpperCase()}
             </button>
           </div>
         </div>
