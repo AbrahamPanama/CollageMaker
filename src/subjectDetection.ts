@@ -6,10 +6,46 @@ const SYNTHETIC_BODY_HEIGHT = 7;
 const BODY_TOP_HEADROOM = 0.35;
 const MAX_DETECTED_TOP_HEADROOM = 0.7;
 
+export type FaceDetectorName = 'blazeface' | 'faceapi';
+
+export type FaceCandidate = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  score: number;
+  detector: FaceDetectorName;
+};
+
+// BlazeFace fires on high-contrast patterns, hands and shirts at scores up to
+// ~0.6, while face-api's SSD rarely scores a non-face above ~0.3. A detection is
+// accepted on its own only above the detector's `confident` score; between
+// `corroborated` and `confident` it needs the other detector to agree on the
+// same spot. `corroborated` is also the minimum score each detector reports.
+export const FACE_SCORE_THRESHOLDS: Record<FaceDetectorName, { confident: number; corroborated: number }> = {
+  blazeface: { confident: 0.7, corroborated: 0.4 },
+  faceapi: { confident: 0.5, corroborated: 0.3 },
+};
+const CORROBORATION_IOU = 0.3;
+
 export type PhotoSubjectDetection = {
   subject: SubjectBox | null;
   detections: SubjectDetections;
 };
+
+export function selectConfidentFaces<T extends FaceCandidate>(candidates: T[]): T[] {
+  return candidates.filter((candidate) => {
+    const thresholds = FACE_SCORE_THRESHOLDS[candidate.detector];
+    if (candidate.score >= thresholds.confident) return true;
+    if (candidate.score < thresholds.corroborated) return false;
+    return candidates.some(
+      (other) =>
+        other.detector !== candidate.detector &&
+        other.score >= FACE_SCORE_THRESHOLDS[other.detector].corroborated &&
+        intersectionOverUnion(candidate, other) >= CORROBORATION_IOU
+    );
+  });
+}
 
 export function buildPhotoSubjectDetection(
   faces: SubjectBox[],
@@ -172,13 +208,24 @@ function mergeDuplicateBoxes(a: SubjectBox, b: SubjectBox): SubjectBox {
   );
 }
 
-function overlapOverSmaller(a: SubjectBox, b: SubjectBox) {
+type Rect = { x: number; y: number; w: number; h: number };
+
+function intersectionArea(a: Rect, b: Rect) {
   const left = Math.max(a.x, b.x);
   const top = Math.max(a.y, b.y);
   const right = Math.min(a.x + a.w, b.x + b.w);
   const bottom = Math.min(a.y + a.h, b.y + b.h);
-  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
-  return intersection / Math.max(0.0001, Math.min(a.w * a.h, b.w * b.h));
+  return Math.max(0, right - left) * Math.max(0, bottom - top);
+}
+
+function overlapOverSmaller(a: SubjectBox, b: SubjectBox) {
+  return intersectionArea(a, b) / Math.max(0.0001, Math.min(a.w * a.h, b.w * b.h));
+}
+
+function intersectionOverUnion(a: Rect, b: Rect) {
+  const intersection = intersectionArea(a, b);
+  const union = a.w * a.h + b.w * b.h - intersection;
+  return union > 0 ? intersection / union : 0;
 }
 
 function normalizeBox(box: SubjectBox, source: SubjectSource): SubjectBox {

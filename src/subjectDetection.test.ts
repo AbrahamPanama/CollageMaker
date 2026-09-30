@@ -3,8 +3,10 @@ import {
   buildPhotoSubjectDetection,
   dedupeSubjectBoxes,
   refinePersonBox,
+  selectConfidentFaces,
   synthesizePersonBox,
 } from './subjectDetection';
+import type { FaceCandidate } from './subjectDetection';
 import type { SubjectBox } from './types';
 
 const face = (x: number, y: number, w = 0.1, h = 0.1): SubjectBox => ({
@@ -105,5 +107,52 @@ describe('hybrid subject detection', () => {
     expect(result.detections.people).toHaveLength(4);
     expect(subjectCenterY).toBeGreaterThan(faceCenterY + 0.18);
     expect((result.subject?.y ?? 0) + (result.subject?.h ?? 0)).toBeGreaterThan(0.95);
+  });
+});
+
+// Scores and boxes below are taken from real detector output on the app's test
+// images (normalized coordinates; the filter is scale-invariant).
+describe('face confidence filtering', () => {
+  const blaze = (score: number, x: number, y: number, w: number, h: number): FaceCandidate => ({
+    x, y, w, h, score, detector: 'blazeface',
+  });
+  const faceApi = (score: number, x: number, y: number, w: number, h: number): FaceCandidate => ({
+    x, y, w, h, score, detector: 'faceapi',
+  });
+
+  it('rejects uncorroborated mid-score BlazeFace hits on patterns', () => {
+    const polkaDots = [
+      blaze(0.595, 0.185, 0.043, 0.224, 0.224),
+      blaze(0.405, 0.115, 0.112, 0.223, 0.223),
+    ];
+    expect(selectConfidentFaces(polkaDots)).toEqual([]);
+  });
+
+  it('keeps confident faces from either detector on their own', () => {
+    const kept = selectConfidentFaces([
+      blaze(0.931, 0.541, 0.309, 0.229, 0.188),
+      faceApi(0.786, 0.127, 0.628, 0.021, 0.035),
+    ]);
+    expect(kept).toHaveLength(2);
+  });
+
+  it('accepts mid-score faces when both detectors agree on the spot', () => {
+    const kept = selectConfidentFaces([
+      blaze(0.45, 0.171, 0.256, 0.334, 0.274),
+      faceApi(0.35, 0.19, 0.197, 0.289, 0.32),
+    ]);
+    expect(kept).toHaveLength(2);
+  });
+
+  it('does not let a loose box borrow confidence from a face it merely contains', () => {
+    const dadFace = faceApi(0.996, 0.337, 0.049, 0.174, 0.112);
+    const looseBox = blaze(0.514, 0.276, 0.008, 0.399, 0.189);
+    expect(selectConfidentFaces([dadFace, looseBox])).toEqual([dadFace]);
+  });
+
+  it('ignores corroboration from a detection below its own minimum score', () => {
+    const shirt = blaze(0.535, 0.549, 0.725, 0.259, 0.212);
+    const weakEcho = faceApi(0.2, 0.55, 0.73, 0.25, 0.2);
+    expect(selectConfidentFaces([shirt, weakEcho])).toEqual([]);
   });
 });

@@ -4,8 +4,14 @@
 // bundled under public/ so detection works offline in both web and Tauri builds.
 
 import type { FaceDetector, ObjectDetector } from '@mediapipe/tasks-vision';
-import { buildPhotoSubjectDetection, dedupeSubjectBoxes, unionSubjectBoxes } from './subjectDetection';
-import type { PhotoSubjectDetection } from './subjectDetection';
+import {
+  FACE_SCORE_THRESHOLDS,
+  buildPhotoSubjectDetection,
+  dedupeSubjectBoxes,
+  selectConfidentFaces,
+  unionSubjectBoxes,
+} from './subjectDetection';
+import type { FaceCandidate, PhotoSubjectDetection } from './subjectDetection';
 import type { SubjectBox } from './types';
 
 type DetectableSource = HTMLImageElement | HTMLCanvasElement;
@@ -44,7 +50,7 @@ function getFaceDetector(): Promise<FaceDetector | null> {
         return await mod.FaceDetector.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: FACE_MODEL_URL },
           runningMode: 'IMAGE',
-          minDetectionConfidence: 0.15,
+          minDetectionConfidence: FACE_SCORE_THRESHOLDS.blazeface.corroborated,
         });
       } catch (e) {
         console.warn('MediaPipe face detector failed to load', e);
@@ -98,14 +104,12 @@ function loadFaceApi(): Promise<boolean> {
   return faceApiPromise;
 }
 
-type DetectedBox = { x: number; y: number; w: number; h: number };
-
 function detectOnSource(
   detector: FaceDetector,
   source: DetectableSource,
   offsetX: number,
   offsetY: number,
-  out: DetectedBox[]
+  out: FaceCandidate[]
 ) {
   try {
     const result = detector.detect(source);
@@ -117,6 +121,8 @@ function detectOnSource(
         y: b.originY + offsetY,
         w: b.width,
         h: b.height,
+        score: d.categories[0]?.score ?? 0,
+        detector: 'blazeface',
       });
     }
   } catch (e) {
@@ -142,14 +148,17 @@ function cropToCanvas(
 
 async function detectWithFaceApi(
   img: DetectableSource,
-  out: DetectedBox[]
+  out: FaceCandidate[]
 ): Promise<void> {
   const ok = await loadFaceApi();
   if (!ok || !faceApiModule) return;
   try {
     const detections = await faceApiModule.detectAllFaces(
       img as never,
-      new faceApiModule.SsdMobilenetv1Options({ minConfidence: 0.2, maxResults: 200 })
+      new faceApiModule.SsdMobilenetv1Options({
+        minConfidence: FACE_SCORE_THRESHOLDS.faceapi.corroborated,
+        maxResults: 200,
+      })
     );
     for (const d of detections) {
       out.push({
@@ -157,6 +166,8 @@ async function detectWithFaceApi(
         y: d.box.y,
         w: d.box.width,
         h: d.box.height,
+        score: d.score,
+        detector: 'faceapi',
       });
     }
   } catch (e) {
@@ -166,7 +177,7 @@ async function detectWithFaceApi(
 
 async function detectFaces(img: DetectableSource, options: DetectSubjectOptions): Promise<SubjectBox[]> {
   const { width: W, height: H } = getSourceSize(img);
-  const detections: DetectedBox[] = [];
+  const detections: FaceCandidate[] = [];
 
   const detector = await getFaceDetector();
 
@@ -201,12 +212,15 @@ async function detectFaces(img: DetectableSource, options: DetectSubjectOptions)
   }
 
   const faceApiMode = options.faceApiMode ?? 'always';
-  if (faceApiMode === 'always' || (faceApiMode === 'whenNoFace' && detections.length === 0)) {
+  if (
+    faceApiMode === 'always' ||
+    (faceApiMode === 'whenNoFace' && selectConfidentFaces(detections).length === 0)
+  ) {
     await detectWithFaceApi(img, detections);
   }
 
   return dedupeSubjectBoxes(
-    detections.map((box) => {
+    selectConfidentFaces(detections).map((box) => {
       const padX = box.w * 0.14;
       const padTop = box.h * 0.22;
       const padBottom = box.h * 0.3;
