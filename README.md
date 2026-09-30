@@ -1,21 +1,21 @@
 # Collage Maker
 
-Photo collages, flipbooks and brick mosaics, with subject-aware framing. Drop in photos (or a short video), pick a mode, and the app lays them out with faces and people automatically kept in frame. Everything runs locally, in the browser or as a desktop app. Your photos are never uploaded.
+Photo collages, flipbooks and brick photo panels, with subject-aware framing. Drop in photos (or a short video), pick a mode, and the app lays them out with faces and people automatically kept in frame. Everything runs locally, in the browser or as a desktop app. Your photos are never uploaded.
 
 ## Modes
 
 - **Shape** — Vexel-style mosaics in any vector shape. A quadtree packs bigger photos into the interior and smaller ones along curves; cell count auto-fits your photo count. Pick from the built-in library (circle, square, rounded, triangle, diamond, hexagon, octagon, pill, heart) or upload any single-path SVG (saved to `localStorage`).
 - **Grid** — auto-generated grid layouts scored for balance and subject placement, with variants to shuffle through. Layouts stay stable as photos are added or removed. Supports hero shapes, SVG templates that define the grid sections, and a photo tray for arranging photos.
 - **Flipbook** — a printable **rotary flipbook** built on duplex half-blades. Import frames from photos or from a short video clip (trimmed to ≤ 6 s, one frame per blade, auto-framed in *Locked*, *Follow* or *Per-frame tight* mode). Exports a duplex print PDF with vector cut contours, or TIFF sheets bundled in a ZIP.
-- **Lego** — tile photos onto brick layouts and check the result in an interactive, double-sided 3D preview before exporting.
+- **Lego** — a double-sided brick photo panel: pick a set (Portrait 33 / 42 / 52 or Heart), add a front and a back image, frame each independently, and check the assembled panel in an interactive 3D preview. Exports each face as clean production artwork at print size.
 
 ## Shared features
 
 - **Subject-aware framing** — MediaPipe BlazeFace and face-api.js (SSD MobileNet) find faces; a MediaPipe EfficientDet-Lite0 detector finds people, so crops keep the whole person rather than just the face. smartcrop saliency is the fallback when nothing is detected.
 - **Auto close-up** — zooms in past cover-fit so detected subjects fill a configurable portion of each cell.
 - **Manual framing** — pan and zoom any photo (0.25×–4×) in the frame editor.
-- **Echo fill** — when a photo is zoomed out past its cell, the empty space is filled with a blurred, dimmed copy of the same photo.
-- **Export** — PNG / JPG / TIFF / PDF / SVG at Web 1080² / HD 1920² / Print 3600² / Poster 7200² / Custom resolutions, with optional transparent background. The formats offered depend on the mode. On desktop, exports go through a native Save dialog.
+- **Echo fill** — when a photo is zoomed out past its cell, the empty space is filled with an enlarged copy of the same photo instead of a blank background. Blur and dim are adjustable; the *Soft echo* preset applies both.
+- **Export** — Shape and Grid export PNG / JPG / TIFF / PDF / SVG at Web 1080² / HD 1920² / Print 3600² / Poster 7200² / Custom resolutions. Flipbook (PDF or TIFF sheets) and Lego export at their physical print size at 300 DPI. All modes offer a transparent background and a *Prevent pure white* option (`#FFFFFF` → `#FEFEFE`) for UV printers. On desktop, exports go through a native Save dialog.
 
 ## Develop
 
